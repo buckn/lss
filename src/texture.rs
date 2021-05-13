@@ -1,12 +1,13 @@
 //! Loading and rendering textures. Also render textures, per-pixel image manipulations.
 
 use crate::{
+    color::Color,
     file::{load_file, FileError},
     get_context,
     math::Rect,
 };
 
-use crate::quad_gl::{Color, DrawMode, Vertex};
+use crate::quad_gl::{DrawMode, Vertex};
 use glam::{vec2, Vec2};
 
 pub use crate::quad_gl::FilterMode;
@@ -292,7 +293,7 @@ pub fn draw_texture_ex(
     color: Color,
     params: DrawTextureParams,
 ) {
-    let context = &mut get_context().draw_context;
+    let context = get_context();
 
     let Rect {
         x: sx,
@@ -416,7 +417,7 @@ pub fn get_screen_data() -> Image {
 }
 
 /// Texture, data stored in GPU memory
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Texture2D {
     pub(crate) texture: miniquad::Texture,
 }

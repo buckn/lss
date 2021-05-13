@@ -43,10 +43,10 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
-mod drawing;
 mod exec;
 mod quad_gl;
 
+pub mod audio;
 pub mod camera;
 pub mod color;
 pub mod file;
@@ -67,8 +67,55 @@ pub mod prelude;
 
 pub mod telemetry;
 
-// TODO: write something about macroquad entrypoint
-#[doc(hidden)]
+/// Macroquad entry point.
+///
+/// ```skip
+/// #[main("Window name")]
+/// async fn main() {
+/// }
+/// ```
+///
+/// ```skip
+/// fn window_conf() -> Conf {
+///     Conf {
+///         window_title: "Window name".to_owned(),
+///         fullscreen: true,
+///         ..Default::default()
+///     }
+/// }
+/// #[macroquad::main(window_conf)]
+/// async fn main() {
+/// }
+/// ```
+///
+/// ## Error handling
+///
+/// `async fn main()` can have the same signature as a normal `main` in Rust.
+/// The most typical use cases are:
+/// * `async fn main() {}`
+/// * `async fn main() -> Result<(), Error> {}` (note that `Error` should implement `Debug`)
+///
+/// When a lot of third party crates are involved and very different errors may happens, `anyhow` crate may help:
+/// * `async fn main() -> anyhow::Result<()> {}`
+///
+/// For better control over game errors custom error type may be introduced:
+/// ```skip
+/// #[derive(Debug)]
+/// enum GameError {
+///     FileError(macroquad::FileError),
+///     SomeThirdPartyCrateError(somecrate::Error)
+/// }
+/// impl From<macroquad::file::FileError> for GameError {
+///     fn from(error: macroquad::file::FileError) -> GameError {
+///         GameError::FileError(error)
+///     }
+/// }
+/// impl From<somecrate::Error> for GameError {
+///     fn from(error: somecrate::Error) -> GameError {
+///         GameError::SomeThirdPartyCrateError(error)
+///     }
+/// }
+/// ```
 pub use macroquad_macro::main;
 
 /// Cross platform random generator.
@@ -83,13 +130,17 @@ pub mod logging {
 }
 pub use miniquad;
 
-use drawing::DrawContext;
-use glam::{vec2, Vec2};
-use quad_gl::{colors::*, Color};
-use ui::ui_context::UiContext;
+use crate::{
+    color::{colors::*, Color},
+    quad_gl::QuadGl,
+    ui::ui_context::UiContext,
+};
+
+use glam::{vec2, Mat4, Vec2};
 
 struct Context {
     quad_context: QuadContext,
+    audio_context: audio::AudioContext,
 
     screen_width: f32,
     screen_height: f32,
@@ -111,7 +162,9 @@ struct Context {
 
     input_events: Vec<Vec<MiniquadInputEvent>>,
 
-    draw_context: DrawContext,
+    gl: QuadGl,
+    camera_matrix: Option<Mat4>,
+
     ui_context: UiContext,
     coroutines_context: experimental::coroutines::CoroutinesContext,
     fonts_storage: text::FontsStorage,
@@ -119,6 +172,9 @@ struct Context {
     start_time: f64,
     last_frame_time: f64,
     frame_time: f64,
+
+    #[cfg(one_screenshot)]
+    counter: usize,
 }
 
 #[derive(Clone)]
@@ -214,16 +270,22 @@ impl Context {
 
             input_events: Vec::new(),
 
-            draw_context: DrawContext::new(&mut ctx),
+            camera_matrix: None,
+            gl: QuadGl::new(&mut ctx),
+
             ui_context: UiContext::new(&mut ctx),
             fonts_storage: text::FontsStorage::new(&mut ctx),
 
             quad_context: ctx,
+            audio_context: audio::AudioContext::new(),
             coroutines_context: experimental::coroutines::CoroutinesContext::new(),
 
             start_time: miniquad::date::now(),
             last_frame_time: miniquad::date::now(),
             frame_time: 1. / 60.,
+
+            #[cfg(one_screenshot)]
+            counter: 0,
         }
     }
 
@@ -237,12 +299,22 @@ impl Context {
     fn end_frame(&mut self) {
         crate::experimental::scene::update();
 
-        self.ui_context.draw();
+        self.perform_render_passes();
 
-        self.draw_context
-            .perform_render_passes(&mut self.quad_context);
+        self.ui_context.draw(&mut self.quad_context, &mut self.gl);
+        let screen_mat = self.pixel_perfect_projection_matrix();
+        self.gl.draw(&mut self.quad_context, screen_mat);
 
         self.quad_context.commit_frame();
+
+        #[cfg(one_screenshot)]
+        {
+            get_context().counter += 1;
+            if get_context().counter == 3 {
+                crate::prelude::get_screen_data().export_png("screenshot.png");
+                panic!("screenshot successfully saved to `screenshot.png`");
+            }
+        }
 
         telemetry::end_gpu_query();
 
@@ -269,7 +341,27 @@ impl Context {
     fn clear(&mut self, color: Color) {
         self.quad_context
             .clear(Some((color.r, color.g, color.b, color.a)), None, None);
-        self.draw_context.gl.reset();
+        self.gl.reset();
+    }
+
+    pub(crate) fn pixel_perfect_projection_matrix(&self) -> glam::Mat4 {
+        let (width, height) = self.quad_context.screen_size();
+
+        glam::Mat4::orthographic_rh_gl(0., width, height, 0., -1., 1.)
+    }
+
+    pub(crate) fn projection_matrix(&self) -> glam::Mat4 {
+        if let Some(matrix) = self.camera_matrix {
+            matrix
+        } else {
+            self.pixel_perfect_projection_matrix()
+        }
+    }
+
+    pub(crate) fn perform_render_passes(&mut self) {
+        let matrix = self.projection_matrix();
+
+        self.gl.draw(&mut self.quad_context, matrix);
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "macroquad"
-version = "0.3.0-alpha.17"
+version = "0.3.3"
 authors = ["not-fl3 <not.fl3@gmail.com>"]
 edition = "2018"
 license = "MIT/Apache-2.0"
@@ -12,25 +12,29 @@ Simple and easy to use graphics library
 readme="README.md"
 
 [features]
-default = ["log-impl"]
+default = ["log-impl", "audio"]
 log-impl = ["miniquad/log-impl"]
+audio = ["rodio"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-miniquad = "0.3.0-alpha.29"
+miniquad = "0.3.0-alpha.30"
 quad-rand = "0.2.1"
 glam = {version = "0.14", features = ["scalar-math"] }
 image = { version = "0.23.12", default-features = false, features = ["png", "tga"] }
-macroquad_macro = { version = "0.1.2", path = "macroquad_macro" }
+macroquad_macro = { version = "0.1.5", path = "macroquad_macro" }
 fontdue = "0.4.0"
 bumpalo = "3.4"
+
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
+rodio = { version = "0.13.0", optional=true, default-features = false, features = ["wav", "vorbis"] }
 
 [dev-dependencies]
 macroquad-particles = { path = "./particles" }
 macroquad-tiled = { path = "./tiled" }
-physics-platformer = { path = "./physics-platformer" }
+macroquad-platformer = { path = "./physics-platformer" }
 
 # workaround to fix the examples
 # this allows to use macroquad-particles in examples without two versions of macroquad

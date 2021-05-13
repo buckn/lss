@@ -33,8 +33,30 @@ pub(crate) use render::ElementState;
 
 use std::ops::DerefMut;
 
+/// Root UI. Widgets drawn with the root ui will be always presented at the end of the frame with a "default" camera.
+/// UI space would be a "default" screen space (0..screen_width(), 0..screen_height())
 pub fn root_ui() -> impl DerefMut<Target = Ui> {
     crate::get_context().ui_context.ui.borrow_mut()
+}
+
+/// Current camera world space UI.
+/// Widgets will be drawn either at the end of the frame or just before next "set_camera" clal
+/// UI space would be equal to the camera space, widgets will be drawn at the plane with Y up X right and Z = 0.
+/// Note that windows focus queue, input focus etc is shared across all cameras.
+/// So this:
+///
+/// ```skip
+/// camera_ui().draw_window();
+/// set_camera(..);
+/// camera_ui().draw_window();
+/// root_ui().draw_window();
+/// ```
+/// Will result 3 windows on the screen, all in different cameras and probably looking differently,
+/// but only one of them would be focused.
+#[doc(hidden)]
+#[allow(unreachable_code)]
+pub fn camera_ui() -> impl DerefMut<Target = Ui> {
+    unimplemented!() as &'static mut Ui
 }
 
 use crate::{
@@ -58,12 +80,6 @@ use input::{InputCharacter, Key};
 
 pub type Id = u64;
 
-pub struct Texture2D {
-    pub width: u32,
-    pub height: u32,
-    pub data: Vec<u8>,
-}
-
 pub(crate) struct Window {
     pub id: Id,
     pub parent: Option<Id>,
@@ -83,7 +99,6 @@ pub(crate) struct Window {
     pub cursor: Cursor,
     pub childs: Vec<Id>,
     pub want_close: bool,
-    pub input_focus: Option<Id>,
     pub force_focus: bool,
 }
 
@@ -123,14 +138,8 @@ impl Window {
             childs: vec![],
             want_close: false,
             movable,
-            input_focus: None,
             force_focus,
         }
-    }
-
-    pub fn input_focused(&self, id: Id) -> bool {
-        self.input_focus
-            .map_or(false, |input_focus| input_focus == id)
     }
 
     pub fn top_level(&self) -> bool {
@@ -201,6 +210,78 @@ impl StyleStack {
     }
 }
 
+pub(crate) struct TabSelector {
+    counter: isize,
+    wants: Option<isize>,
+    to_change: Option<isize>,
+}
+
+impl TabSelector {
+    fn new() -> Self {
+        TabSelector {
+            counter: 0,
+            wants: None,
+            to_change: None,
+        }
+    }
+
+    fn new_frame(&mut self) {
+        self.to_change = if self.wants == Some(-1) {
+            Some(self.counter - 1)
+        } else if self.wants == Some(self.counter) {
+            Some(0)
+        } else {
+            self.wants
+        };
+        self.wants = None;
+        self.counter = 0;
+    }
+
+    /// Returns true if this widget should gain focus, because user pressed `Tab` or `Shift + Tab`.
+    pub(crate) fn register_selectable_widget(&mut self, has_focus: bool, input: &Input) -> bool {
+        if has_focus {
+            enum PressedTabKey {
+                Tab,
+                ShiftTab,
+                Other,
+            }
+
+            let key = if input
+                .input_buffer
+                .iter()
+                .any(|inp| inp.key == Key::KeyCode(KeyCode::Tab) && inp.modifier_shift)
+            {
+                PressedTabKey::ShiftTab
+            } else if input
+                .input_buffer
+                .iter()
+                .any(|inp| inp.key == Key::KeyCode(KeyCode::Tab))
+            {
+                PressedTabKey::Tab
+            } else {
+                PressedTabKey::Other
+            };
+
+            match key {
+                PressedTabKey::Tab => self.wants = Some(self.counter + 1),
+                PressedTabKey::ShiftTab => self.wants = Some(self.counter - 1),
+                PressedTabKey::Other => {}
+            }
+        }
+
+        let result = if self.to_change.map(|id| id == self.counter).unwrap_or(false) {
+            self.to_change = None;
+            true
+        } else {
+            false
+        };
+
+        self.counter += 1;
+
+        result
+    }
+}
+
 pub struct Ui {
     input: Input,
     skin_stack: StyleStack,
@@ -240,6 +321,9 @@ pub struct Ui {
     clipboard: Box<dyn crate::ui::ClipboardObject>,
 
     key_repeat: key_repeat::KeyRepeat,
+
+    tab_selector: TabSelector,
+    input_focus: Option<Id>,
 }
 
 #[derive(Default)]
@@ -268,6 +352,7 @@ impl AnyStorage {
             .unwrap()
     }
 }
+
 pub(crate) struct WindowContext<'a> {
     pub window: &'a mut Window,
     pub dragging: &'a mut Option<(Id, DragState)>,
@@ -282,6 +367,8 @@ pub(crate) struct WindowContext<'a> {
     pub focused: bool,
     pub last_item_clicked: &'a mut bool,
     pub last_item_hovered: &'a mut bool,
+    pub tab_selector: &'a mut TabSelector,
+    pub input_focus: &'a mut Option<Id>,
 }
 
 impl<'a> WindowContext<'a> {
@@ -383,6 +470,11 @@ impl<'a> WindowContext<'a> {
         *self.last_item_clicked = *self.last_item_hovered && self.input.click_down();
 
         (*self.last_item_hovered, *self.last_item_clicked)
+    }
+
+    pub fn input_focused(&self, id: Id) -> bool {
+        self.input_focus
+            .map_or(false, |input_focus| input_focus == id)
     }
 }
 
@@ -568,6 +660,8 @@ impl Ui {
             key_repeat: key_repeat::KeyRepeat::new(),
             last_item_clicked: false,
             last_item_hovered: false,
+            tab_selector: TabSelector::new(),
+            input_focus: None,
         }
     }
 
@@ -674,6 +768,8 @@ impl Ui {
             clipboard: &mut *self.clipboard,
             last_item_clicked: &mut self.last_item_clicked,
             last_item_hovered: &mut self.last_item_hovered,
+            tab_selector: &mut self.tab_selector,
+            input_focus: &mut self.input_focus,
         }
     }
 
@@ -719,6 +815,8 @@ impl Ui {
             clipboard: &mut *self.clipboard,
             last_item_clicked: &mut self.last_item_clicked,
             last_item_hovered: &mut self.last_item_hovered,
+            tab_selector: &mut self.tab_selector,
+            input_focus: &mut self.input_focus,
         }
     }
 
@@ -764,6 +862,8 @@ impl Ui {
             clipboard: &mut *self.clipboard,
             last_item_clicked: &mut self.last_item_clicked,
             last_item_hovered: &mut self.last_item_hovered,
+            tab_selector: &mut self.tab_selector,
+            input_focus: &mut self.input_focus,
         }
     }
 
@@ -916,6 +1016,8 @@ impl Ui {
         self.input.reset();
         self.input.window_active = self.hovered_window == 0;
 
+        self.tab_selector.new_frame();
+
         self.key_repeat.new_frame(self.time);
 
         for (_, window) in &mut self.windows {
@@ -1028,8 +1130,6 @@ impl Ui {
 }
 
 pub(crate) mod ui_context {
-    use std::collections::HashMap;
-
     use crate::prelude::*;
     use crate::window::miniquad::*;
 
@@ -1041,7 +1141,6 @@ pub(crate) mod ui_context {
     pub(crate) struct UiContext {
         pub ui: Rc<RefCell<megaui::Ui>>,
         ui_draw_list: Vec<megaui::DrawList>,
-        megaui_textures: HashMap<u32, Texture2D>,
         material: Option<Material>,
     }
 
@@ -1054,7 +1153,6 @@ pub(crate) mod ui_context {
             UiContext {
                 ui: Rc::new(RefCell::new(ui)),
                 ui_draw_list: vec![],
-                megaui_textures: HashMap::new(),
                 material: None,
             }
         }
@@ -1120,7 +1218,7 @@ pub(crate) mod ui_context {
             ui.mouse_wheel(wheel_x, -wheel_y);
         }
 
-        pub(crate) fn draw(&mut self) {
+        pub(crate) fn draw(&mut self, ctx: &mut miniquad::Context, quad_gl: &mut QuadGl) {
             // TODO: this belongs to new and waits for cleaning up context initialization mess
             let material = self.material.get_or_insert_with(|| {
                 let fragment_shader = FRAGMENT_SHADER.to_string();
@@ -1144,11 +1242,6 @@ pub(crate) mod ui_context {
                 .unwrap()
             });
 
-            let InternalGlContext {
-                quad_gl,
-                quad_context: ctx,
-            } = unsafe { get_internal_gl() };
-
             let mut ui = self.ui.borrow_mut();
             self.ui_draw_list.clear();
             ui.render(&mut self.ui_draw_list);
@@ -1163,7 +1256,7 @@ pub(crate) mod ui_context {
 
             for draw_command in &ui_draw_list {
                 if let Some(texture) = draw_command.texture {
-                    quad_gl.texture(Some(self.megaui_textures[&texture]));
+                    quad_gl.texture(Some(texture));
                 } else {
                     quad_gl.texture(Some(font_texture));
                 }

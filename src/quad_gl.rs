@@ -2,144 +2,13 @@
 
 use miniquad::*;
 
-pub use colors::*;
-
 pub use miniquad::{FilterMode, ShaderError};
 
-use crate::texture::Texture2D;
+use crate::{color::Color, texture::Texture2D};
 
 use std::collections::BTreeMap;
 
 //use crate::telemetry;
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Color {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-    pub a: f32,
-}
-
-/// Build a color from 4 components of 0..255 values
-/// This is a temporary solution and going to be replaced with const fn,
-/// waiting for https://github.com/rust-lang/rust/issues/57241
-#[macro_export]
-macro_rules! color_u8 {
-    ($r:expr, $g:expr, $b:expr, $a:expr) => {
-        Color::new(
-            $r as f32 / 255.,
-            $g as f32 / 255.,
-            $b as f32 / 255.,
-            $a as f32 / 255.,
-        )
-    };
-}
-
-#[test]
-fn color_from_bytes() {
-    assert_eq!(Color::new(1.0, 0.0, 0.0, 1.0), color_u8!(255, 0, 0, 255));
-    assert_eq!(
-        Color::new(1.0, 0.5, 0.0, 1.0),
-        color_u8!(255, 127.5, 0, 255)
-    );
-    assert_eq!(
-        Color::new(0.0, 1.0, 0.5, 1.0),
-        color_u8!(0, 255, 127.5, 255)
-    );
-}
-
-impl Into<[u8; 4]> for Color {
-    fn into(self) -> [u8; 4] {
-        [
-            (self.r * 255.) as u8,
-            (self.g * 255.) as u8,
-            (self.b * 255.) as u8,
-            (self.a * 255.) as u8,
-        ]
-    }
-}
-
-impl Into<Color> for [u8; 4] {
-    fn into(self) -> Color {
-        Color::new(
-            self[0] as f32 / 255.,
-            self[1] as f32 / 255.,
-            self[2] as f32 / 255.,
-            self[3] as f32 / 255.,
-        )
-    }
-}
-
-impl Into<[f32; 4]> for Color {
-    fn into(self) -> [f32; 4] {
-        [self.r, self.g, self.b, self.a]
-    }
-}
-
-impl From<[f32; 4]> for Color {
-    fn from(colors: [f32; 4]) -> Color {
-        Color::new(colors[0], colors[1], colors[2], colors[3])
-    }
-}
-
-impl Color {
-    pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Color {
-        Color { r, g, b, a }
-    }
-
-    /// Build a color from 4 0..255 components
-    /// Unfortunately it may not be const fn due to https://github.com/rust-lang/rust/issues/57241
-    /// When const version is needed "color_u8" macro may be a workaround
-    pub fn from_rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
-        Color::new(
-            r as f32 / 255.,
-            g as f32 / 255.,
-            b as f32 / 255.,
-            a as f32 / 255.,
-        )
-    }
-
-    pub fn to_vec(&self) -> glam::Vec4 {
-        glam::Vec4::new(self.r, self.g, self.b, self.a)
-    }
-
-    pub fn from_vec(vec: glam::Vec4) -> Self {
-        Self::new(vec.x, vec.y, vec.z, vec.w)
-    }
-}
-
-pub mod colors {
-    //! Constants for some common colors.
-
-    use super::Color;
-
-    pub const LIGHTGRAY: Color = Color::new(0.78, 0.78, 0.78, 1.00);
-    pub const GRAY: Color = Color::new(0.51, 0.51, 0.51, 1.00);
-    pub const DARKGRAY: Color = Color::new(0.31, 0.31, 0.31, 1.00);
-    pub const YELLOW: Color = Color::new(0.99, 0.98, 0.00, 1.00);
-    pub const GOLD: Color = Color::new(1.00, 0.80, 0.00, 1.00);
-    pub const ORANGE: Color = Color::new(1.00, 0.63, 0.00, 1.00);
-    pub const PINK: Color = Color::new(1.00, 0.43, 0.76, 1.00);
-    pub const RED: Color = Color::new(0.90, 0.16, 0.22, 1.00);
-    pub const MAROON: Color = Color::new(0.75, 0.13, 0.22, 1.00);
-    pub const GREEN: Color = Color::new(0.00, 0.89, 0.19, 1.00);
-    pub const LIME: Color = Color::new(0.00, 0.62, 0.18, 1.00);
-    pub const DARKGREEN: Color = Color::new(0.00, 0.46, 0.17, 1.00);
-    pub const SKYBLUE: Color = Color::new(0.40, 0.75, 1.00, 1.00);
-    pub const BLUE: Color = Color::new(0.00, 0.47, 0.95, 1.00);
-    pub const DARKBLUE: Color = Color::new(0.00, 0.32, 0.67, 1.00);
-    pub const PURPLE: Color = Color::new(0.78, 0.48, 1.00, 1.00);
-    pub const VIOLET: Color = Color::new(0.53, 0.24, 0.75, 1.00);
-    pub const DARKPURPLE: Color = Color::new(0.44, 0.12, 0.49, 1.00);
-    pub const BEIGE: Color = Color::new(0.83, 0.69, 0.51, 1.00);
-    pub const BROWN: Color = Color::new(0.50, 0.42, 0.31, 1.00);
-    pub const DARKBROWN: Color = Color::new(0.30, 0.25, 0.18, 1.00);
-    pub const WHITE: Color = Color::new(1.00, 1.00, 1.00, 1.00);
-    pub const BLACK: Color = Color::new(0.00, 0.00, 0.00, 1.00);
-    pub const BLANK: Color = Color::new(0.00, 0.00, 0.00, 0.00);
-    pub const MAGENTA: Color = Color::new(1.00, 0.00, 1.00, 1.00);
-}
 
 const MAX_VERTICES: usize = 10000;
 const MAX_INDICES: usize = 5000;
@@ -167,6 +36,7 @@ struct DrawCall {
 
     draw_mode: DrawMode,
     pipeline: GlPipeline,
+    uniforms: Option<Vec<u8>>,
     render_pass: Option<RenderPass>,
 }
 
@@ -230,6 +100,7 @@ impl DrawCall {
         model: glam::Mat4,
         draw_mode: DrawMode,
         pipeline: GlPipeline,
+        uniforms: Option<Vec<u8>>,
         render_pass: Option<RenderPass>,
     ) -> DrawCall {
         DrawCall {
@@ -243,6 +114,7 @@ impl DrawCall {
             model,
             draw_mode,
             pipeline,
+            uniforms,
             render_pass,
         }
     }
@@ -414,6 +286,7 @@ struct GlState {
     pipeline: Option<GlPipeline>,
     depth_test_enable: bool,
 
+    break_batching: bool,
     snapshotter: MagicSnapshotter,
 
     render_pass: Option<RenderPass>,
@@ -676,9 +549,10 @@ impl QuadGl {
             state: GlState {
                 clip: None,
                 texture: white_texture,
-                model_stack: vec![glam::Mat4::identity()],
+                model_stack: vec![glam::Mat4::IDENTITY],
                 draw_mode: DrawMode::Triangles,
                 pipeline: None,
+                break_batching: false,
                 depth_test_enable: false,
                 snapshotter: MagicSnapshotter::new(ctx),
                 render_pass: None,
@@ -737,6 +611,19 @@ impl QuadGl {
         ))
     }
 
+    pub(crate) fn clear(&mut self, ctx: &mut miniquad::Context, color: Color) {
+        let clear = PassAction::clear_color(color.r, color.g, color.b, color.a);
+
+        if let Some(current_pass) = self.state.render_pass {
+            ctx.begin_pass(current_pass, clear);
+        } else {
+            ctx.begin_default_pass(clear);
+        }
+        ctx.end_render_pass();
+
+        self.clear_draw_calls();
+    }
+
     /// Reset only draw calls state
     pub fn clear_draw_calls(&mut self) {
         self.draw_calls_count = 0;
@@ -746,7 +633,7 @@ impl QuadGl {
     pub fn reset(&mut self) {
         self.state.clip = None;
         self.state.texture = self.white_texture;
-        self.state.model_stack = vec![glam::Mat4::identity()];
+        self.state.model_stack = vec![glam::Mat4::IDENTITY];
 
         self.draw_calls_count = 0;
     }
@@ -826,6 +713,11 @@ impl QuadGl {
             }
             ctx.apply_bindings(&bindings);
 
+            if let Some(ref uniforms) = dc.uniforms {
+                for i in 0..uniforms.len() {
+                    pipeline.uniforms_data[i] = uniforms[i];
+                }
+            }
             pipeline.set_uniform("Projection", projection);
             pipeline.set_uniform("Model", dc.model);
             pipeline.set_uniform("_Time", time);
@@ -849,8 +741,7 @@ impl QuadGl {
         // back in the days when projection was a part of static batcher
         // now it is not, so here we go with this hack
 
-        let ctx = crate::get_context();
-        ctx.draw_context.projection_matrix(&mut ctx.quad_context)
+        crate::get_context().projection_matrix()
     }
 
     pub fn get_active_render_pass(&self) -> Option<RenderPass> {
@@ -884,6 +775,7 @@ impl QuadGl {
     }
 
     pub fn pipeline(&mut self, pipeline: Option<GlPipeline>) {
+        self.state.break_batching = true;
         self.state.pipeline = pipeline;
     }
 
@@ -916,17 +808,29 @@ impl QuadGl {
                 || draw_call.draw_mode != self.state.draw_mode
                 || draw_call.vertices_count >= MAX_VERTICES - vertices.len()
                 || draw_call.indices_count >= MAX_INDICES - indices.len()
+                || self.state.break_batching
         }) {
+            let uniforms = self.state.pipeline.map_or(None, |pipeline| {
+                Some(
+                    self.pipelines
+                        .get_quad_pipeline_mut(pipeline)
+                        .uniforms_data
+                        .clone(),
+                )
+            });
+
             if self.draw_calls_count >= self.draw_calls.len() {
                 self.draw_calls.push(DrawCall::new(
                     self.state.texture,
                     self.state.model(),
                     self.state.draw_mode,
                     pip,
+                    uniforms.clone(),
                     self.state.render_pass,
                 ));
             }
             self.draw_calls[self.draw_calls_count].texture = self.state.texture;
+            self.draw_calls[self.draw_calls_count].uniforms = uniforms;
             self.draw_calls[self.draw_calls_count].vertices_count = 0;
             self.draw_calls[self.draw_calls_count].indices_count = 0;
             self.draw_calls[self.draw_calls_count].clip = self.state.clip;
@@ -935,6 +839,7 @@ impl QuadGl {
             self.draw_calls[self.draw_calls_count].render_pass = self.state.render_pass;
 
             self.draw_calls_count += 1;
+            self.state.break_batching = false;
         };
         let dc = &mut self.draw_calls[self.draw_calls_count - 1];
 
@@ -955,6 +860,8 @@ impl QuadGl {
     }
 
     pub fn set_uniform<T>(&mut self, pipeline: GlPipeline, name: &str, uniform: T) {
+        self.state.break_batching = true;
+
         self.pipelines
             .get_quad_pipeline_mut(pipeline)
             .set_uniform(name, uniform);

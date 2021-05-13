@@ -8,6 +8,7 @@ use crate::{
     color::Color,
     math::{vec2, Rect, RectOffset, Vec2},
     text::{atlas::Atlas, FontInternal, TextDimensions},
+    texture::Texture2D,
     ui::style::Style,
 };
 
@@ -55,7 +56,7 @@ pub(crate) enum DrawCommand {
     },
     DrawRawTexture {
         rect: Rect,
-        texture: u32,
+        texture: Texture2D,
     },
     Clip {
         rect: Option<Rect>,
@@ -247,7 +248,7 @@ impl Painter {
         font: &mut FontInternal,
         font_size: u16,
     ) -> TextDimensions {
-        font.measure_text(label, font_size, 1.0)
+        font.measure_text(label, font_size, 1.0, 1.0)
     }
 
     /// If character is in font atlas - will return x advance from position to potential next character position
@@ -327,7 +328,7 @@ impl Painter {
         }
     }
 
-    pub fn draw_raw_texture(&mut self, rect: Rect, texture: u32) {
+    pub fn draw_raw_texture(&mut self, rect: Rect, texture: Texture2D) {
         if self
             .clipping_zone
             .map_or(false, |clip| !clip.overlaps(&rect))
