@@ -1,15 +1,12 @@
 //! Resolve high-level drawing primitive + given style into DrawCommand
 //! DrawCommand will later rasterized into mesh in mesh_rasterizer.rs
 
-// TODO: remove this!
-#![allow(warnings)]
-
 use crate::{
     color::Color,
     math::{vec2, Rect, RectOffset, Vec2},
     text::{atlas::Atlas, FontInternal, TextDimensions},
     texture::Texture2D,
-    ui::style::Style,
+    ui::{style::Style, UiContent},
 };
 
 use std::{cell::RefCell, rc::Rc};
@@ -22,6 +19,7 @@ pub struct ElementState {
     pub selected: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) enum DrawCommand {
     DrawCharacter {
@@ -46,6 +44,7 @@ pub(crate) enum DrawCommand {
         p0: Vec2,
         p1: Vec2,
         p2: Vec2,
+        source: Rect,
         color: Color,
     },
     DrawLine {
@@ -114,10 +113,17 @@ impl DrawCommand {
                 source,
                 color,
             },
-            DrawCommand::DrawTriangle { p0, p1, p2, color } => DrawCommand::DrawTriangle {
+            DrawCommand::DrawTriangle {
+                p0,
+                p1,
+                p2,
+                source,
+                color,
+            } => DrawCommand::DrawTriangle {
                 p0: p0 + offset,
                 p1: p1 + offset,
                 p2: p2 + offset,
+                source,
                 color,
             },
             DrawCommand::Clip { rect } => DrawCommand::Clip {
@@ -173,16 +179,22 @@ impl Painter {
         0.
     }
 
-    pub fn element_size(&self, style: &Style, content: &str) -> Vec2 {
+    pub fn content_with_margins_size(&self, style: &Style, content: &UiContent) -> Vec2 {
         let font = &mut *style.font.borrow_mut();
         let font_size = style.font_size;
 
         let background_margin = style.background_margin.unwrap_or_default();
         let margin = style.margin.unwrap_or_default();
 
-        let text_measures = self.label_size(content, None, font, font_size);
+        let size = match content {
+            UiContent::Label(label) => {
+                let text_measures = self.label_size(&*label, None, font, font_size);
+                (text_measures.width, font_size as f32)
+            }
+            UiContent::Texture(texture) => (texture.width(), texture.height()),
+        };
 
-        vec2(text_measures.width, font_size as f32)
+        vec2(size.0, size.1)
             + Vec2::new(
                 margin.left + margin.right + background_margin.left + background_margin.right,
                 margin.top + margin.bottom + background_margin.top + background_margin.bottom,
@@ -211,12 +223,14 @@ impl Painter {
         }
     }
 
+    // mostly legacy, technically everything should use `draw_element_content`
+    // but draw_element_label had a slightly different margins resolver, so..
     pub fn draw_element_label(
         &mut self,
         style: &Style,
         pos: Vec2,
         label: &str,
-        _element_state: ElementState,
+        element_state: ElementState,
     ) {
         let font = &mut *style.font.borrow_mut();
         let font_size = style.font_size;
@@ -225,7 +239,7 @@ impl Painter {
         let background_margin = style.background_margin.unwrap_or_default();
         let margin = style.margin.unwrap_or_default();
 
-        let top_coord = (font_size as f32 - text_measures.height as f32) / 2.
+        let top_coord = (font_size as f32) / 2. - (text_measures.height / 2.).trunc()
             + margin.top
             + background_margin.top;
 
@@ -235,10 +249,56 @@ impl Painter {
                 margin.left + background_margin.left,
                 top_coord + text_measures.offset_y,
             ),
-            Some(style.text_color),
+            Some(style.text_color(element_state)),
             font,
             font_size,
         );
+    }
+
+    pub fn draw_element_content(
+        &mut self,
+        style: &Style,
+        element_pos: Vec2,
+        element_size: Vec2,
+        content: &UiContent,
+        element_state: ElementState,
+    ) {
+        match content {
+            UiContent::Label(data) => {
+                let font = &mut *style.font.borrow_mut();
+                let font_size = style.font_size;
+                let text_color = style.text_color(element_state);
+                let text_measures = self.label_size(data, None, font, font_size);
+
+                let left_coord = (element_size.x - text_measures.width) / 2.;
+                let top_coord =
+                    element_size.y / 2. - text_measures.height / 2. + text_measures.offset_y;
+
+                self.draw_label(
+                    &*data,
+                    element_pos + Vec2::new(left_coord, top_coord),
+                    Some(text_color),
+                    font,
+                    font_size,
+                );
+            }
+            UiContent::Texture(texture) => {
+                let background_margin = style.background_margin.unwrap_or_default();
+                let margin = style.margin.unwrap_or_default();
+
+                let top_coord = margin.top + background_margin.top;
+
+                let pos = element_pos + Vec2::new(margin.left + background_margin.left, top_coord);
+                let size = element_size
+                    - vec2(
+                        background_margin.left + background_margin.right,
+                        background_margin.top + background_margin.bottom,
+                    )
+                    - vec2(margin.left + margin.right, margin.top + margin.bottom);
+
+                self.draw_raw_texture(Rect::new(pos.x, pos.y, size.x, size.y), *texture);
+            }
+        }
     }
 
     pub fn label_size(
@@ -315,6 +375,7 @@ impl Painter {
         let params = params.into();
 
         let mut total_width = 0.;
+        let position = vec2(position.x.trunc(), position.y.trunc());
         for character in label.chars() {
             if let Some(advance) = self.draw_character(
                 character,
@@ -392,6 +453,7 @@ impl Painter {
         })
     }
 
+    #[allow(dead_code)]
     pub fn draw_triangle<T>(&mut self, p0: Vec2, p1: Vec2, p2: Vec2, color: T)
     where
         T: Into<Color>,
@@ -402,10 +464,13 @@ impl Painter {
             return;
         }
 
+        let source = self.font_atlas.borrow().get_uv_rect(0).unwrap();
+
         self.add_command(DrawCommand::DrawTriangle {
             p0,
             p1,
             p2,
+            source,
             color: color.into(),
         })
     }
@@ -443,6 +508,7 @@ impl Painter {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum Alignment {
     Left,
     Center,

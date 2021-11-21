@@ -61,11 +61,11 @@ impl Image {
     /// ```
     pub fn from_file_with_format(bytes: &[u8], format: Option<image::ImageFormat>) -> Image {
         let img = if let Some(fmt) = format {
-            image::load_from_memory_with_format(&bytes, fmt)
+            image::load_from_memory_with_format(bytes, fmt)
                 .unwrap_or_else(|e| panic!("{}", e))
                 .to_rgba8()
         } else {
-            image::load_from_memory(&bytes)
+            image::load_from_memory(bytes)
                 .unwrap_or_else(|e| panic!("{}", e))
                 .to_rgba8()
         };
@@ -222,6 +222,15 @@ pub struct RenderTarget {
     pub render_pass: miniquad::RenderPass,
 }
 
+impl RenderTarget {
+    pub fn delete(&self) {
+        self.texture.delete();
+
+        let context = &mut get_context().quad_context;
+        self.render_pass.delete(context);
+    }
+}
+
 pub fn render_target(width: u32, height: u32) -> RenderTarget {
     let context = &mut get_context().quad_context;
 
@@ -266,6 +275,7 @@ pub struct DrawTextureParams {
     /// When `None`, rotate around the texture's center.
     /// When `Some`, the coordinates are in screen-space.
     /// E.g. pivot (0,0) rotates around the top left corner of the screen, not of the
+    /// texture.
     pub pivot: Option<Vec2>,
 }
 
@@ -296,16 +306,27 @@ pub fn draw_texture_ex(
     let context = get_context();
 
     let Rect {
-        x: sx,
-        y: sy,
-        w: sw,
-        h: sh,
+        x: mut sx,
+        y: mut sy,
+        w: mut sw,
+        h: mut sh,
     } = params.source.unwrap_or(Rect {
         x: 0.,
         y: 0.,
         w: texture.width(),
         h: texture.height(),
     });
+
+    let mut texture = texture;
+
+    if let Some(batched) = context.texture_batcher.get(texture) {
+        texture = batched.0;
+
+        sx = batched.1.x * texture.width();
+        sy = batched.1.y * texture.height();
+        sw = batched.1.w * texture.width();
+        sh = batched.1.h * texture.height();
+    }
 
     let (mut w, mut h) = match params.dest_size {
         Some(dst) => (dst.x, dst.y),
@@ -460,11 +481,11 @@ impl Texture2D {
         format: Option<image::ImageFormat>,
     ) -> Texture2D {
         let img = if let Some(fmt) = format {
-            image::load_from_memory_with_format(&bytes, fmt)
+            image::load_from_memory_with_format(bytes, fmt)
                 .unwrap_or_else(|e| panic!("{}", e))
                 .to_rgba8()
         } else {
-            image::load_from_memory(&bytes)
+            image::load_from_memory(bytes)
                 .unwrap_or_else(|e| panic!("{}", e))
                 .to_rgba8()
         };
@@ -501,11 +522,14 @@ impl Texture2D {
     /// # }
     /// ```
     pub fn from_rgba8(width: u16, height: u16, bytes: &[u8]) -> Texture2D {
-        let ctx = &mut get_context().quad_context;
+        let ctx = get_context();
 
-        Texture2D {
-            texture: miniquad::Texture::from_rgba8(ctx, width, height, bytes),
-        }
+        let texture = miniquad::Texture::from_rgba8(&mut ctx.quad_context, width, height, bytes);
+        let texture = Texture2D { texture };
+
+        ctx.texture_batcher.add_unbatched(texture);
+
+        texture
     }
 
     /// Uploads [Image] data to this texture.
@@ -594,4 +618,48 @@ impl Texture2D {
     pub fn delete(&self) {
         self.raw_miniquad_texture_handle().delete()
     }
+}
+
+pub(crate) struct Batcher {
+    unbatched: Vec<Texture2D>,
+    atlas: crate::text::atlas::Atlas,
+}
+
+impl Batcher {
+    pub fn new(ctx: &mut miniquad::Context) -> Batcher {
+        Batcher {
+            unbatched: vec![],
+            atlas: crate::text::atlas::Atlas::new(ctx, miniquad::FilterMode::Linear),
+        }
+    }
+
+    pub fn add_unbatched(&mut self, texture: Texture2D) {
+        self.unbatched.push(texture);
+    }
+
+    pub fn get(&mut self, texture: Texture2D) -> Option<(Texture2D, Rect)> {
+        let id = texture.raw_miniquad_texture_handle().gl_internal_id();
+        let uv_rect = self.atlas.get_uv_rect(id as _)?;
+
+        Some((self.atlas.texture(), uv_rect))
+    }
+}
+
+/// Build an atlas out of all currently loaded texture
+/// Later on all draw_texture calls with texture available in the atlas will use
+/// the one from the atlas
+/// NOTE: the GPU memory and texture itself in Texture2D will still be allocated
+/// and Texture->Image conversions will work with Texture2D content, not the atlas
+pub fn build_textures_atlas() {
+    let context = get_context();
+
+    for texture in context.texture_batcher.unbatched.drain(0..) {
+        let sprite: Image = texture.get_texture_data();
+        let id = texture.raw_miniquad_texture_handle().gl_internal_id();
+
+        context.texture_batcher.atlas.cache_sprite(id as _, sprite);
+    }
+
+    let texture = context.texture_batcher.atlas.texture();
+    crate::telemetry::log_string(&format!("Atlas: {} {}", texture.width(), texture.height()));
 }

@@ -8,6 +8,7 @@ async fn main() {
         let label_style = root_ui()
             .style_builder()
             .font(include_bytes!("../examples/ui_assets/HTOWERT.TTF"))
+            .unwrap()
             .text_color(Color::from_rgba(180, 180, 120, 255))
             .font_size(30)
             .build();
@@ -39,6 +40,7 @@ async fn main() {
                 None,
             ))
             .font(include_bytes!("../examples/ui_assets/HTOWERT.TTF"))
+            .unwrap()
             .text_color(Color::from_rgba(180, 180, 100, 255))
             .font_size(40)
             .build();
@@ -47,6 +49,7 @@ async fn main() {
             .style_builder()
             .background_margin(RectOffset::new(0., 0., 0., 0.))
             .font(include_bytes!("../examples/ui_assets/HTOWERT.TTF"))
+            .unwrap()
             .text_color(Color::from_rgba(120, 120, 120, 255))
             .color_selected(Color::from_rgba(190, 190, 190, 255))
             .font_size(50)
@@ -65,6 +68,7 @@ async fn main() {
         let label_style = root_ui()
             .style_builder()
             .font(include_bytes!("../examples/ui_assets/MinimalPixel v2.ttf"))
+            .unwrap()
             .text_color(Color::from_rgba(120, 120, 120, 255))
             .font_size(25)
             .build();
@@ -95,6 +99,7 @@ async fn main() {
                 None,
             ))
             .font(include_bytes!("../examples/ui_assets/MinimalPixel v2.ttf"))
+            .unwrap()
             .text_color(Color::from_rgba(180, 180, 100, 255))
             .font_size(40)
             .build();
@@ -123,7 +128,22 @@ async fn main() {
             ))
             .background_margin(RectOffset::new(2., 2., 2., 2.))
             .font(include_bytes!("../examples/ui_assets/MinimalPixel v2.ttf"))
+            .unwrap()
             .text_color(Color::from_rgba(120, 120, 120, 255))
+            .font_size(25)
+            .build();
+
+        let combobox_style = root_ui()
+            .style_builder()
+            .background(Image::from_file_with_format(
+                include_bytes!("../examples/ui_assets/combobox_background.png"),
+                None,
+            ))
+            .background_margin(RectOffset::new(4., 25., 6., 6.))
+            .font(include_bytes!("../examples/ui_assets/MinimalPixel v2.ttf"))
+            .unwrap()
+            .text_color(Color::from_rgba(120, 120, 120, 255))
+            .color(Color::from_rgba(210, 210, 210, 255))
             .font_size(25)
             .build();
 
@@ -133,6 +153,7 @@ async fn main() {
             label_style,
             checkbox_style,
             editbox_style,
+            combobox_style,
             ..root_ui().default_skin()
         }
     };
@@ -144,11 +165,12 @@ async fn main() {
     let mut checkbox = false;
     let mut text = String::new();
     let mut number = 0.0f32;
+    let mut combobox = 0;
 
     loop {
-        clear_background(RED);
+        clear_background(GRAY);
 
-        root_ui().group(hash!(), vec2(100.0, 100.0), |ui| {
+        root_ui().group(hash!(), vec2(70.0, 100.0), |ui| {
             ui.label(None, "Window 1");
 
             if ui.button(None, "Skin 1") {
@@ -162,7 +184,7 @@ async fn main() {
             }
         });
         root_ui().same_line(0.);
-        root_ui().group(hash!(), vec2(100.0, 100.0), |ui| {
+        root_ui().group(hash!(), vec2(70.0, 100.0), |ui| {
             ui.label(None, "Window 2");
             if ui.button(None, "Skin 1") {
                 window2_skin = skin1.clone();
@@ -175,13 +197,9 @@ async fn main() {
             }
         });
 
-        root_ui().button(None, "Apply");
-        root_ui().same_line(0.);
-        root_ui().button(None, "aa");
-
         root_ui().push_skin(&window1_skin);
 
-        root_ui().window(hash!(), vec2(100., 150.), vec2(300., 300.), |ui| {
+        root_ui().window(hash!(), vec2(20., 250.), vec2(300., 300.), |ui| {
             widgets::Button::new("Play")
                 .position(vec2(65.0, 15.0))
                 .ui(ui);
@@ -196,16 +214,22 @@ async fn main() {
         root_ui().pop_skin();
 
         root_ui().push_skin(&window2_skin);
-        root_ui().window(hash!(), vec2(400., 300.), vec2(500., 200.), |ui| {
+        root_ui().window(hash!(), vec2(250., 20.), vec2(500., 250.), |ui| {
             ui.checkbox(hash!(), "Checkbox 1", &mut checkbox);
+            ui.combo_box(
+                hash!(),
+                "Combobox",
+                &["First option", "Second option"],
+                &mut combobox,
+            );
             ui.input_text(hash!(), "Text", &mut text);
             ui.drag(hash!(), "Drag", None, &mut number);
 
             widgets::Button::new("Apply")
-                .position(vec2(80.0, 100.0))
+                .position(vec2(80.0, 150.0))
                 .ui(ui);
             widgets::Button::new("Cancel")
-                .position(vec2(280.0, 100.0))
+                .position(vec2(280.0, 150.0))
                 .ui(ui);
         });
         root_ui().pop_skin();

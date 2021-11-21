@@ -7,7 +7,6 @@ use crate::{
     get_context,
     math::{vec3, Rect},
     texture::Image,
-    window::{get_internal_gl, InternalGlContext},
 };
 
 use crate::color::WHITE;
@@ -42,13 +41,33 @@ impl std::fmt::Debug for FontInternal {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FontError(pub &'static str);
+
+impl From<&'static str> for FontError {
+    fn from(s: &'static str) -> Self {
+        Self(s)
+    }
+}
+
+impl std::fmt::Display for FontError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "font error: {}", self.0)
+    }
+}
+
+impl std::error::Error for FontError {}
+
 impl FontInternal {
-    pub(crate) fn load_from_bytes(atlas: Rc<RefCell<Atlas>>, bytes: &[u8]) -> FontInternal {
-        FontInternal {
-            font: fontdue::Font::from_bytes(&bytes[..], fontdue::FontSettings::default()).unwrap(),
+    pub(crate) fn load_from_bytes(
+        atlas: Rc<RefCell<Atlas>>,
+        bytes: &[u8],
+    ) -> Result<FontInternal, FontError> {
+        Ok(FontInternal {
+            font: fontdue::Font::from_bytes(&bytes[..], fontdue::FontSettings::default())?,
             characters: HashMap::new(),
             atlas,
-        }
+        })
     }
 
     pub(crate) fn ascent(&self, font_size: f32) -> f32 {
@@ -165,6 +184,13 @@ impl Font {
         (0..255).filter_map(::std::char::from_u32).collect()
     }
 
+    /// List of latin characters
+    pub fn latin_character_list() -> Vec<char> {
+        "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM1234567890!@#$%^&*(){}[].,:"
+            .chars()
+            .collect()
+    }
+
     pub fn populate_font_cache(&self, characters: &[char], size: u16) {
         let font = get_context().fonts_storage.get_font_mut(*self);
 
@@ -209,7 +235,7 @@ impl Default for TextParams {
 }
 
 /// Load font from file with "path"
-pub async fn load_ttf_font(path: &str) -> Font {
+pub async fn load_ttf_font(path: &str) -> Result<Font, FontError> {
     let bytes = crate::file::load_file(path).await.unwrap();
 
     load_ttf_font_from_bytes(&bytes[..])
@@ -219,17 +245,20 @@ pub async fn load_ttf_font(path: &str) -> Font {
 /// ```ignore
 /// let font = load_ttf_font_from_bytes(include_bytes!("font.ttf"));
 /// ```
-pub fn load_ttf_font_from_bytes(bytes: &[u8]) -> Font {
+pub fn load_ttf_font_from_bytes(bytes: &[u8]) -> Result<Font, FontError> {
     let context = get_context();
-    let atlas = Rc::new(RefCell::new(Atlas::new(&mut get_context().quad_context)));
+    let atlas = Rc::new(RefCell::new(Atlas::new(
+        &mut get_context().quad_context,
+        miniquad::FilterMode::Linear,
+    )));
 
     let font = context
         .fonts_storage
-        .make_font(FontInternal::load_from_bytes(atlas.clone(), bytes));
+        .make_font(FontInternal::load_from_bytes(atlas.clone(), bytes)?);
 
     font.populate_font_cache(&Font::ascii_character_list(), 15);
 
-    font
+    Ok(font)
 }
 
 /// Draw text with given font_size
@@ -250,9 +279,6 @@ pub fn draw_text(text: &str, x: f32, y: f32, font_size: f32, color: Color) {
 /// Draw text with custom params such as font, font size and font scale.
 pub fn draw_text_ex(text: &str, x: f32, y: f32, params: TextParams) {
     let font = get_context().fonts_storage.get_font_mut(params.font);
-    let InternalGlContext {
-        quad_context: ctx, ..
-    } = unsafe { get_internal_gl() };
 
     let font_scale_x = params.font_scale * params.font_scale_aspect;
     let font_scale_y = params.font_scale;
@@ -286,7 +312,7 @@ pub fn draw_text_ex(text: &str, x: f32, y: f32, params: TextParams) {
         );
 
         crate::texture::draw_texture_ex(
-            atlas.texture(ctx),
+            atlas.texture(),
             dest.x,
             dest.y,
             params.color,
@@ -330,9 +356,10 @@ pub(crate) struct FontsStorage {
 
 impl FontsStorage {
     pub(crate) fn new(ctx: &mut miniquad::Context) -> FontsStorage {
-        let atlas = Rc::new(RefCell::new(Atlas::new(ctx)));
+        let atlas = Rc::new(RefCell::new(Atlas::new(ctx, miniquad::FilterMode::Linear)));
 
-        let default_font = FontInternal::load_from_bytes(atlas, include_bytes!("ProggyClean.ttf"));
+        let default_font =
+            FontInternal::load_from_bytes(atlas, include_bytes!("ProggyClean.ttf")).unwrap();
         FontsStorage {
             fonts: vec![default_font],
         }

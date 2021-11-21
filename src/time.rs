@@ -2,11 +2,6 @@
 
 use crate::get_context;
 
-/// Set target FPS (maximum)
-pub fn set_target_fps(_fps: f32) {
-    unimplemented!()
-}
-
 /// Returns current FPS
 pub fn get_fps() -> i32 {
     let context = get_context();
@@ -18,7 +13,11 @@ pub fn get_fps() -> i32 {
 pub fn get_frame_time() -> f32 {
     let context = get_context();
 
-    context.frame_time as f32
+    if crate::experimental::scene::in_fixed_update() {
+        crate::experimental::scene::fixed_frame_time()
+    } else {
+        context.frame_time as f32
+    }
 }
 
 /// Returns elapsed wall-clock time in seconds since start

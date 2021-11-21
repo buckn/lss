@@ -1,17 +1,17 @@
 use crate::{
-    math::{Rect, Vec2},
-    ui::{ElementState, Id, Layout, Ui},
+    math::{vec2, Rect, Vec2},
+    ui::{ElementState, Id, Layout, Ui, UiContent},
 };
 
-pub struct Tabbar<'a> {
+pub struct Tabbar<'a, 'b> {
     id: Id,
     size: Vec2,
-    selected_tab: Option<usize>,
+    selected_tab: Option<&'b mut u32>,
     tabs: &'a [&'a str],
 }
 
-impl Tabbar<'_> {
-    pub fn new<'a>(id: Id, size: Vec2, tabs: &'a [&'a str]) -> Tabbar<'a> {
+impl<'a, 'b> Tabbar<'a, 'b> {
+    pub fn new(id: Id, size: Vec2, tabs: &'a [&'a str]) -> Tabbar<'a, 'b> {
         Tabbar {
             id,
             size,
@@ -20,26 +20,26 @@ impl Tabbar<'_> {
         }
     }
 
-    pub fn selected_tab(self, selected_tab: Option<usize>) -> Self {
+    pub fn selected_tab<'c>(self, selected_tab: Option<&'c mut u32>) -> Tabbar<'a, 'c> {
         Tabbar {
+            id: self.id,
             selected_tab,
-            ..self
+            size: self.size,
+            tabs: self.tabs,
         }
     }
 
-    pub fn ui(self, ui: &mut Ui) -> u32 {
+    pub fn ui(mut self, ui: &mut Ui) -> u32 {
         let context = ui.get_active_window_context();
 
         let pos = context.window.cursor.fit(self.size, Layout::Vertical);
 
         let width = self.size.x as f32 / self.tabs.len() as f32;
-        let selected = {
-            let selected_mut = context.storage_u32.entry(self.id).or_insert(0);
-            if let Some(n) = self.selected_tab {
-                *selected_mut = n as u32;
-            };
-            *selected_mut
-        };
+
+        let selected = *self
+            .selected_tab
+            .as_deref()
+            .unwrap_or_else(|| context.storage_u32.entry(self.id).or_insert(0));
 
         for (n, label) in self.tabs.iter().enumerate() {
             let rect = Rect::new(
@@ -52,7 +52,13 @@ impl Tabbar<'_> {
             let selected = n as u32 == selected;
 
             if context.focused && hovered && context.input.click_up {
-                *context.storage_u32.entry(self.id).or_insert(0) = n as u32;
+                let id = self.id;
+                let selected_mut = self
+                    .selected_tab
+                    .as_deref_mut()
+                    .unwrap_or_else(|| context.storage_u32.entry(id).or_insert(0));
+
+                *selected_mut = n as u32;
             }
 
             context.window.painter.draw_element_background(
@@ -67,16 +73,11 @@ impl Tabbar<'_> {
                 },
             );
 
-            let text_width = context
-                .window
-                .painter
-                .element_size(&context.style.tabbar_style, label)
-                .x;
-
-            context.window.painter.draw_element_label(
+            context.window.painter.draw_element_content(
                 &context.style.tabbar_style,
-                pos + Vec2::new(width * n as f32 + (width - text_width) / 2., 0.0),
-                label,
+                pos + vec2(width * n as f32, 0.0),
+                vec2(width, self.size.y),
+                &UiContent::Label((*label).into()),
                 ElementState {
                     focused: context.focused,
                     hovered,
@@ -85,7 +86,11 @@ impl Tabbar<'_> {
                 },
             );
         }
-        context.storage_u32[&self.id]
+
+        *self
+            .selected_tab
+            .as_deref()
+            .unwrap_or_else(|| context.storage_u32.entry(self.id).or_insert(0))
     }
 }
 

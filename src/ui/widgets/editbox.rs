@@ -204,7 +204,7 @@ impl<'a> Editbox<'a> {
                     modifier_shift,
                     ..
                 } => {
-                    let to_line_begin = state.find_line_begin(&text) as i32;
+                    let to_line_begin = state.find_line_begin(text) as i32;
                     state.move_cursor(text, -to_line_begin, modifier_shift);
                 }
                 InputCharacter {
@@ -212,7 +212,7 @@ impl<'a> Editbox<'a> {
                     modifier_shift,
                     ..
                 } => {
-                    let to_line_end = state.find_line_end(&text) as i32;
+                    let to_line_end = state.find_line_end(text) as i32;
                     state.move_cursor(text, to_line_end, modifier_shift);
                 }
                 InputCharacter {
@@ -220,11 +220,11 @@ impl<'a> Editbox<'a> {
                     modifier_shift,
                     ..
                 } => {
-                    let to_line_begin = state.find_line_begin(&text) as i32;
+                    let to_line_begin = state.find_line_begin(text) as i32;
                     state.move_cursor(text, -to_line_begin, modifier_shift);
                     if state.cursor != 0 {
                         state.move_cursor(text, -1, modifier_shift);
-                        let new_to_line_begin = state.find_line_begin(&text) as i32;
+                        let new_to_line_begin = state.find_line_begin(text) as i32;
                         let offset = to_line_begin.min(new_to_line_begin) - new_to_line_begin;
                         state.move_cursor(text, offset, modifier_shift);
                     }
@@ -234,8 +234,8 @@ impl<'a> Editbox<'a> {
                     modifier_shift,
                     ..
                 } => {
-                    let to_line_begin = state.find_line_begin(&text) as i32;
-                    let to_line_end = state.find_line_end(&text) as i32;
+                    let to_line_begin = state.find_line_begin(text) as i32;
+                    let to_line_end = state.find_line_end(text) as i32;
 
                     state.move_cursor(text, to_line_end, modifier_shift);
                     if text.len() != 0 && state.cursor < text.len() as u32 - 1 {
@@ -416,18 +416,16 @@ impl<'a> Editbox<'a> {
             }
 
             if character != '\n' {
-                let ascent = font.ascent(font_size as f32);
-                let descent = font.descent(font_size as f32);
+                let descent = font.descent(font_size as f32) as f32;
+                let ascent = font.ascent(font_size as f32) as f32;
+                let baseline = (ascent + descent) / 2.;
 
                 advance = context
                     .window
                     .painter
                     .draw_character(
                         character,
-                        pos + vec2(
-                            x,
-                            y + font_size as f32 / 2. + (ascent - descent) / 2. + descent,
-                        ),
+                        pos + vec2(x, y + font_size as f32 - baseline),
                         text_color,
                         &mut *font,
                         font_size,

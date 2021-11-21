@@ -1,29 +1,42 @@
 use crate::{
     math::{vec2, Rect, Vec2},
-    ui::{ElementState, Id, Layout, Ui},
+    ui::{ElementState, Id, Layout, Ui, UiContent},
 };
 
 pub struct Checkbox<'a> {
     id: Id,
     label: &'a str,
+    ratio: f32,
 }
 
 impl<'a> Checkbox<'a> {
     pub fn new(id: Id) -> Checkbox<'a> {
-        Checkbox { id, label: "" }
+        Checkbox {
+            id,
+            label: "",
+            ratio: 0.5,
+        }
+    }
+
+    pub fn ratio(self, ratio: f32) -> Self {
+        Self { ratio, ..self }
     }
 
     pub fn label<'b>(self, label: &'b str) -> Checkbox<'b> {
-        Checkbox { id: self.id, label }
+        Checkbox {
+            id: self.id,
+            label,
+            ratio: self.ratio,
+        }
     }
 
     pub fn ui(self, ui: &mut Ui, data: &mut bool) {
         let context = ui.get_active_window_context();
 
-        let label_size = context
-            .window
-            .painter
-            .element_size(&context.style.label_style, &self.label);
+        let label_size = context.window.painter.content_with_margins_size(
+            &context.style.label_style,
+            &UiContent::Label(self.label.into()),
+        );
         let size = vec2(
             context.window.cursor.area.w - context.style.margin * 2. - context.window.cursor.ident,
             label_size.y.max(22.),
@@ -35,7 +48,7 @@ impl<'a> Checkbox<'a> {
             if self.label.is_empty() {
                 size.x
             } else {
-                size.x / 2.0
+                size.x * self.ratio
             },
             size.y,
         );
@@ -105,7 +118,7 @@ impl<'a> Checkbox<'a> {
         if self.label.is_empty() == false {
             context.window.painter.draw_element_label(
                 &context.style.label_style,
-                Vec2::new(pos.x + size.x / 2. + 5., pos.y),
+                Vec2::new(pos.x + size.x * self.ratio, pos.y),
                 self.label,
                 ElementState {
                     focused: context.focused,

@@ -12,6 +12,7 @@ pub trait Camera {
     fn matrix(&self) -> Mat4;
     fn depth_enabled(&self) -> bool;
     fn render_pass(&self) -> Option<miniquad::RenderPass>;
+    fn viewport(&self) -> Option<(i32, i32, i32, i32)>;
 }
 
 #[derive(Clone, Copy)]
@@ -28,6 +29,15 @@ pub struct Camera2D {
     /// If "render_target" is set - camera will render to texture
     /// otherwise to the screen
     pub render_target: Option<RenderTarget>,
+
+    /// Part of the screen to render to
+    ///
+    /// None means the whole screen
+    ///
+    /// Viewport do not affect camera space, just the render position on the screen
+    ///
+    /// Usefull for things like splitscreen
+    pub viewport: Option<(i32, i32, i32, i32)>,
 }
 
 impl Camera2D {
@@ -42,6 +52,7 @@ impl Camera2D {
             rotation: 0.,
 
             render_target: None,
+            viewport: None,
         }
     }
 }
@@ -55,6 +66,7 @@ impl Default for Camera2D {
             rotation: 0.,
 
             render_target: None,
+            viewport: None,
         }
     }
 }
@@ -91,6 +103,10 @@ impl Camera for Camera2D {
 
     fn render_pass(&self) -> Option<miniquad::RenderPass> {
         self.render_target.map(|rt| rt.render_pass)
+    }
+
+    fn viewport(&self) -> Option<(i32, i32, i32, i32)> {
+        self.viewport
     }
 }
 
@@ -147,6 +163,12 @@ pub struct Camera3D {
     /// If "render_target" is set - camera will render to texture
     /// otherwise to the screen
     pub render_target: Option<RenderTarget>,
+
+    /// Part of the screen to render to
+    /// None means the whole screen
+    /// Viewport do not affect camera space, just the render position on the screen
+    /// Usefull for things like splitscreen
+    pub viewport: Option<(i32, i32, i32, i32)>,
 }
 
 impl Default for Camera3D {
@@ -159,6 +181,7 @@ impl Default for Camera3D {
             fovy: 45.,
             projection: Projection::Perspective,
             render_target: None,
+            viewport: None,
         }
     }
 }
@@ -194,6 +217,10 @@ impl Camera for Camera3D {
     fn render_pass(&self) -> Option<miniquad::RenderPass> {
         self.render_target.map(|rt| rt.render_pass)
     }
+
+    fn viewport(&self) -> Option<(i32, i32, i32, i32)> {
+        self.viewport
+    }
 }
 
 /// Set active 2D or 3D camera
@@ -204,6 +231,7 @@ pub fn set_camera(camera: &dyn Camera) {
     context.perform_render_passes();
 
     context.gl.render_pass(camera.render_pass());
+    context.gl.viewport(camera.viewport());
     context.gl.depth_test(camera.depth_enabled());
     context.camera_matrix = Some(camera.matrix());
 }
@@ -218,4 +246,33 @@ pub fn set_default_camera() {
     context.gl.render_pass(None);
     context.gl.depth_test(false);
     context.camera_matrix = None;
+}
+
+pub(crate) struct CameraState {
+    render_pass: Option<miniquad::RenderPass>,
+    depth_test: bool,
+    matrix: Option<Mat4>,
+}
+
+pub fn push_camera_state() {
+    let context = get_context();
+
+    let camera_state = CameraState {
+        render_pass: context.gl.get_active_render_pass(),
+        depth_test: context.gl.is_depth_test_enabled(),
+        matrix: context.camera_matrix,
+    };
+    context.camera_stack.push(camera_state);
+}
+
+pub fn pop_camera_state() {
+    let context = get_context();
+
+    if let Some(camera_state) = context.camera_stack.pop() {
+        context.perform_render_passes();
+
+        context.gl.render_pass(camera_state.render_pass);
+        context.gl.depth_test(camera_state.depth_test);
+        context.camera_matrix = camera_state.matrix;
+    }
 }

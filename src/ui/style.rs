@@ -1,7 +1,7 @@
 use crate::{
     color::Color,
     math::RectOffset,
-    text::{atlas::Atlas, FontInternal},
+    text::{atlas::Atlas, FontError, FontInternal},
     texture::Image,
     ui::ElementState,
 };
@@ -14,9 +14,9 @@ pub struct StyleBuilder {
     font: Rc<RefCell<FontInternal>>,
     font_size: u16,
     text_color: Color,
-    background: Option<Image>,
     background_margin: Option<RectOffset>,
     margin: Option<RectOffset>,
+    background: Option<Image>,
     background_hovered: Option<Image>,
     background_clicked: Option<Image>,
     color: Color,
@@ -25,6 +25,7 @@ pub struct StyleBuilder {
     color_selected: Color,
     color_selected_hovered: Color,
     color_clicked: Color,
+    reverse_background_z: bool,
 }
 
 impl StyleBuilder {
@@ -35,7 +36,7 @@ impl StyleBuilder {
         StyleBuilder {
             atlas,
             font: default_font,
-            font_size: 13,
+            font_size: 16,
             text_color: Color::from_rgba(0, 0, 0, 255),
             color: Color::from_rgba(255, 255, 255, 255),
             color_hovered: Color::from_rgba(255, 255, 255, 255),
@@ -48,16 +49,17 @@ impl StyleBuilder {
             margin: None,
             background_hovered: None,
             background_clicked: None,
+            reverse_background_z: false,
         }
     }
 
-    pub fn font(self, ttf_bytes: &[u8]) -> StyleBuilder {
-        let font = FontInternal::load_from_bytes(self.atlas.clone(), ttf_bytes);
+    pub fn font(self, ttf_bytes: &[u8]) -> Result<StyleBuilder, FontError> {
+        let font = FontInternal::load_from_bytes(self.atlas.clone(), ttf_bytes)?;
 
-        StyleBuilder {
+        Ok(StyleBuilder {
             font: Rc::new(RefCell::new(font)),
             ..self
-        }
+        })
     }
 
     pub fn background(self, background: Image) -> StyleBuilder {
@@ -144,6 +146,13 @@ impl StyleBuilder {
         }
     }
 
+    pub fn reverse_background_z(self, reverse_background_z: bool) -> StyleBuilder {
+        StyleBuilder {
+            reverse_background_z,
+            ..self
+        }
+    }
+
     pub fn build(self) -> Style {
         let mut atlas = self.atlas.borrow_mut();
 
@@ -180,6 +189,7 @@ impl StyleBuilder {
             font: self.font,
             text_color: self.text_color,
             font_size: self.font_size,
+            reverse_background_z: self.reverse_background_z,
         }
     }
 }
@@ -208,6 +218,7 @@ pub struct Style {
     pub(crate) font: Rc<RefCell<FontInternal>>,
     pub(crate) text_color: Color,
     pub(crate) font_size: u16,
+    pub(crate) reverse_background_z: bool,
 }
 
 impl Style {
@@ -220,13 +231,14 @@ impl Style {
             background_clicked: None,
             font,
             text_color: Color::from_rgba(0, 0, 0, 255),
-            font_size: 13,
+            font_size: 16,
             color: Color::from_rgba(255, 255, 255, 255),
             color_hovered: Color::from_rgba(255, 255, 255, 255),
             color_clicked: Color::from_rgba(255, 255, 255, 255),
             color_selected: Color::from_rgba(255, 255, 255, 255),
             color_selected_hovered: Color::from_rgba(255, 255, 255, 255),
             color_inactive: None,
+            reverse_background_z: false,
         }
     }
 
@@ -239,6 +251,21 @@ impl Style {
             right: background_offset.right + background.right,
             top: background_offset.top + background.top,
             bottom: background_offset.bottom + background.bottom,
+        }
+    }
+
+    pub(crate) fn text_color(&self, element_state: ElementState) -> Color {
+        let ElementState { focused, .. } = element_state;
+
+        if focused {
+            self.text_color
+        } else {
+            Color::new(
+                self.text_color.r * 0.6,
+                self.text_color.g * 0.6,
+                self.text_color.b * 0.6,
+                self.text_color.a * 0.6,
+            )
         }
     }
 
@@ -272,7 +299,7 @@ impl Style {
             return self.color_hovered;
         }
 
-        return self.color;
+        self.color
     }
 
     pub(crate) fn background_sprite(&self, element_state: ElementState) -> Option<u64> {
@@ -288,7 +315,7 @@ impl Style {
             return self.background_hovered;
         }
 
-        return self.background;
+        self.background
     }
 }
 
@@ -297,6 +324,7 @@ pub struct Skin {
     pub label_style: Style,
     pub button_style: Style,
     pub tabbar_style: Style,
+    pub combobox_style: Style,
     pub window_style: Style,
     pub editbox_style: Style,
     pub window_titlebar_style: Style,
@@ -318,6 +346,7 @@ impl Skin {
             label_style: Style {
                 margin: Some(RectOffset::new(2., 2., 2., 2.)),
                 text_color: Color::from_rgba(0, 0, 0, 255),
+                color_inactive: Some(Color::from_rgba(0, 0, 0, 128)),
                 ..Style::default(default_font.clone())
             },
             button_style: Style {
@@ -328,12 +357,24 @@ impl Skin {
                 text_color: Color::from_rgba(0, 0, 0, 255),
                 ..Style::default(default_font.clone())
             },
+            combobox_style: StyleBuilder::new(default_font.clone(), atlas.clone())
+                .background_margin(RectOffset::new(1., 14., 1., 1.))
+                .color_inactive(Color::from_rgba(238, 238, 238, 128))
+                .text_color(Color::from_rgba(0, 0, 0, 255))
+                .color(Color::from_rgba(220, 220, 220, 255))
+                .background(Image {
+                    width: 16,
+                    height: 30,
+                    bytes: include_bytes!("combobox.img").to_vec(),
+                })
+                .build(),
             tabbar_style: Style {
                 margin: Some(RectOffset::new(2., 2., 2., 2.)),
-                color: Color::from_rgba(204, 204, 204, 235),
-                color_clicked: Color::from_rgba(187, 187, 187, 255),
+                color: Color::from_rgba(220, 220, 220, 235),
+                color_clicked: Color::from_rgba(187, 187, 187, 235),
                 color_hovered: Color::from_rgba(170, 170, 170, 235),
-                color_selected: Color::from_rgba(240, 240, 240, 235),
+                color_selected_hovered: Color::from_rgba(180, 180, 180, 235),
+                color_selected: Color::from_rgba(204, 204, 204, 235),
                 text_color: Color::from_rgba(0, 0, 0, 255),
                 ..Style::default(default_font.clone())
             },
@@ -376,7 +417,7 @@ impl Skin {
             },
             checkbox_style: Style {
                 text_color: Color::from_rgba(0, 0, 0, 255),
-                font_size: 13,
+                font_size: 16,
                 color: Color::from_rgba(200, 200, 200, 255),
                 color_hovered: Color::from_rgba(210, 210, 210, 255),
                 color_clicked: Color::from_rgba(150, 150, 150, 255),

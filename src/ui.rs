@@ -12,7 +12,7 @@
 //! This will draw a label and a button one after each other right on top of the
 //! screen.
 
-mod canvas;
+pub mod canvas;
 mod clipboard;
 #[macro_use]
 mod hash;
@@ -25,13 +25,13 @@ pub mod widgets;
 pub use clipboard::ClipboardObject;
 pub use input_handler::{InputHandler, KeyCode};
 pub use render::{DrawList, Vertex};
-pub use style::{Skin, Style};
+pub use style::{Skin, Style, StyleBuilder};
 
 pub use crate::hash;
 
 pub(crate) use render::ElementState;
 
-use std::ops::DerefMut;
+use std::{borrow::Cow, ops::DerefMut};
 
 /// Root UI. Widgets drawn with the root ui will be always presented at the end of the frame with a "default" camera.
 /// UI space would be a "default" screen space (0..screen_width(), 0..screen_height())
@@ -63,7 +63,7 @@ use crate::{
     math::{Rect, RectOffset, Vec2},
     text::{atlas::Atlas, FontInternal},
     texture::Image,
-    ui::{canvas::DrawCanvas, render::Painter, style::StyleBuilder},
+    ui::{canvas::DrawCanvas, render::Painter},
 };
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -80,10 +80,32 @@ use input::{InputCharacter, Key};
 
 pub type Id = u64;
 
+pub enum UiContent<'a> {
+    Label(Cow<'a, str>),
+    Texture(crate::texture::Texture2D),
+}
+
+impl<'a> From<&'a str> for UiContent<'a> {
+    fn from(data: &'a str) -> UiContent<'a> {
+        UiContent::Label(data.into())
+    }
+}
+
+impl From<String> for UiContent<'static> {
+    fn from(data: String) -> UiContent<'static> {
+        UiContent::Label(data.into())
+    }
+}
+
+impl From<crate::texture::Texture2D> for UiContent<'static> {
+    fn from(data: crate::texture::Texture2D) -> UiContent<'static> {
+        UiContent::Texture(data)
+    }
+}
+
 pub(crate) struct Window {
     pub id: Id,
     pub parent: Option<Id>,
-    pub visible: bool,
     // active is set to true when the begin_window is called on this window
     // and is going to be set to false at the end of each frame
     pub active: bool,
@@ -122,7 +144,6 @@ impl Window {
             vertical_scroll_bar_width: 0.,
             title_height,
             parent,
-            visible: true,
             was_active: false,
             active: false,
             painter: Painter::new(atlas),
@@ -598,11 +619,12 @@ impl InputHandler for Ui {
 
 impl Ui {
     pub fn new(ctx: &mut miniquad::Context) -> Ui {
-        let atlas = Rc::new(RefCell::new(Atlas::new(ctx)));
+        let atlas = Rc::new(RefCell::new(Atlas::new(ctx, miniquad::FilterMode::Nearest)));
         let mut font = crate::text::FontInternal::load_from_bytes(
             atlas.clone(),
             include_bytes!("ProggyClean.ttf"),
-        );
+        )
+        .unwrap();
 
         for character in crate::text::Font::ascii_character_list() {
             font.cache_glyph(character, 13);
@@ -655,7 +677,7 @@ impl Ui {
             storage_any: AnyStorage::default(),
             atlas,
             clipboard_selection: String::new(),
-            clipboard: Box::new(crate::ui::clipboard::LocalClipboard::new()),
+            clipboard: Box::new(ui_context::ClipboardObject),
             time: 0.0,
             key_repeat: key_repeat::KeyRepeat::new(),
             last_item_clicked: false,
@@ -919,10 +941,6 @@ impl Ui {
         )
     }
 
-    pub fn set_clipboard_object<T: crate::ui::ClipboardObject + 'static>(&mut self, clipboard: T) {
-        self.clipboard = Box::new(clipboard);
-    }
-
     pub fn is_mouse_captured(&self) -> bool {
         self.input.cursor_grabbed
     }
@@ -971,7 +989,7 @@ impl Ui {
         // so need to figure the root id
 
         if self.in_modal {
-            return true;
+            true
         } else {
             self.child_window_stack
                 .get(0)
@@ -1001,7 +1019,7 @@ impl Ui {
             }
         }
 
-        return false;
+        false
     }
 
     pub fn new_frame(&mut self, delta: f32) {
@@ -1086,6 +1104,14 @@ impl Ui {
         }
     }
 
+    pub fn set_input_focus(&mut self, id: Id) {
+        self.input_focus = Some(id);
+    }
+
+    pub fn clear_input_focus(&mut self) {
+        self.input_focus = None;
+    }
+
     pub fn move_window(&mut self, id: Id, position: Vec2) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.set_position(position);
@@ -1146,9 +1172,7 @@ pub(crate) mod ui_context {
 
     impl UiContext {
         pub(crate) fn new(ctx: &mut miniquad::Context) -> UiContext {
-            let mut ui = megaui::Ui::new(ctx);
-
-            ui.set_clipboard_object(ClipboardObject);
+            let ui = megaui::Ui::new(ctx);
 
             UiContext {
                 ui: Rc::new(RefCell::new(ui)),
@@ -1175,7 +1199,7 @@ pub(crate) mod ui_context {
             let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
             let ctrl = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
 
-            while let Some(c) = get_char_pressed() {
+            while let Some(c) = get_char_pressed_ui() {
                 if ctrl == false {
                     ui.char_event(c, false, false);
                 }
@@ -1218,7 +1242,7 @@ pub(crate) mod ui_context {
             ui.mouse_wheel(wheel_x, -wheel_y);
         }
 
-        pub(crate) fn draw(&mut self, ctx: &mut miniquad::Context, quad_gl: &mut QuadGl) {
+        pub(crate) fn draw(&mut self, _ctx: &mut miniquad::Context, quad_gl: &mut QuadGl) {
             // TODO: this belongs to new and waits for cleaning up context initialization mess
             let material = self.material.get_or_insert_with(|| {
                 let fragment_shader = FRAGMENT_SHADER.to_string();
@@ -1249,7 +1273,7 @@ pub(crate) mod ui_context {
 
             std::mem::swap(&mut ui_draw_list, &mut self.ui_draw_list);
 
-            let font_texture: Texture2D = ui.atlas.borrow_mut().texture(ctx);
+            let font_texture: Texture2D = ui.atlas.borrow_mut().texture();
             quad_gl.texture(Some(font_texture));
 
             gl_use_material(*material);
@@ -1300,15 +1324,13 @@ pub(crate) mod ui_context {
     }
 
     const VERTEX_SHADER: &'static str = "#version 100
-precision lowp float;
-
 attribute vec3 position;
 attribute vec4 color0;
 attribute vec2 texcoord;
 
-varying vec2 uv;
-varying vec2 pos;
-varying vec4 color;
+varying lowp vec2 uv;
+varying lowp vec2 pos;
+varying lowp vec4 color;
 
 uniform mat4 Model;
 uniform mat4 Projection;
@@ -1320,10 +1342,8 @@ void main() {
 }
 ";
     const FRAGMENT_SHADER: &'static str = "#version 100
-precision lowp float;
-
-varying vec2 uv;
-varying vec4 color;
+varying lowp vec2 uv;
+varying lowp vec4 color;
 
 uniform sampler2D Texture;
 

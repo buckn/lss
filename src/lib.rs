@@ -118,16 +118,27 @@ pub mod telemetry;
 /// ```
 pub use macroquad_macro::main;
 
+/// #[macroquad::test] fn test() {}
+///
+/// Very similar to macroquad::main
+/// Right now it will still spawn a window, just like ::main, therefore
+/// is not really usefull for anything than developping macroquad itself
+#[doc(hidden)]
+pub use macroquad_macro::test;
+
 /// Cross platform random generator.
 pub mod rand {
     pub use quad_rand::*;
 }
 
-#[cfg(feature = "log-impl")]
-/// Logging macros, available with "log-impl" feature.
+#[cfg(not(feature = "log-rs"))]
+/// Logging macros, available with miniquad "log-impl" feature.
 pub mod logging {
     pub use miniquad::{debug, error, info, warn};
 }
+#[cfg(feature = "log-rs")]
+// Use logging facade
+pub use ::log as logging;
 pub use miniquad;
 
 use crate::{
@@ -155,8 +166,12 @@ struct Context {
     mouse_released: HashSet<MouseButton>,
     touches: HashMap<u64, input::Touch>,
     chars_pressed_queue: Vec<char>,
+    chars_pressed_ui_queue: Vec<char>,
     mouse_position: Vec2,
     mouse_wheel: Vec2,
+
+    prevent_quit_event: bool,
+    quit_requested: bool,
 
     cursor_grabbed: bool,
 
@@ -169,12 +184,19 @@ struct Context {
     coroutines_context: experimental::coroutines::CoroutinesContext,
     fonts_storage: text::FontsStorage,
 
+    pc_assets_folder: Option<String>,
+
     start_time: f64,
     last_frame_time: f64,
     frame_time: f64,
 
     #[cfg(one_screenshot)]
     counter: usize,
+
+    camera_stack: Vec<camera::CameraState>,
+    texture_batcher: texture::Batcher,
+    unwind: bool,
+    recovery_future: Option<Pin<Box<dyn Future<Output = ()>>>>,
 }
 
 #[derive(Clone)]
@@ -259,12 +281,16 @@ impl Context {
             keys_pressed: HashSet::new(),
             keys_released: HashSet::new(),
             chars_pressed_queue: Vec::new(),
+            chars_pressed_ui_queue: Vec::new(),
             mouse_down: HashSet::new(),
             mouse_pressed: HashSet::new(),
             mouse_released: HashSet::new(),
             touches: HashMap::new(),
             mouse_position: vec2(0., 0.),
             mouse_wheel: vec2(0., 0.),
+
+            prevent_quit_event: false,
+            quit_requested: false,
 
             cursor_grabbed: false,
 
@@ -275,10 +301,14 @@ impl Context {
 
             ui_context: UiContext::new(&mut ctx),
             fonts_storage: text::FontsStorage::new(&mut ctx),
+            texture_batcher: texture::Batcher::new(&mut ctx),
+            camera_stack: vec![],
 
             quad_context: ctx,
             audio_context: audio::AudioContext::new(),
             coroutines_context: experimental::coroutines::CoroutinesContext::new(),
+
+            pc_assets_folder: None,
 
             start_time: miniquad::date::now(),
             last_frame_time: miniquad::date::now(),
@@ -286,6 +316,8 @@ impl Context {
 
             #[cfg(one_screenshot)]
             counter: 0,
+            unwind: false,
+            recovery_future: None,
         }
     }
 
@@ -323,6 +355,8 @@ impl Context {
         self.keys_released.clear();
         self.mouse_pressed.clear();
         self.mouse_released.clear();
+
+        self.quit_requested = false;
 
         // remove all touches that were Ended or Cancelled
         self.touches.retain(|_, touch| {
@@ -368,6 +402,14 @@ impl Context {
 #[no_mangle]
 static mut CONTEXT: Option<Context> = None;
 
+// unfortunately #[cfg(test)] do not work with integration tests
+// so this module should be publicly available
+#[doc(hidden)]
+pub mod test {
+    pub static mut MUTEX: Option<std::sync::Mutex<()>> = None;
+    pub static ONCE: std::sync::Once = std::sync::Once::new();
+}
+
 fn get_context() -> &'static mut Context {
     unsafe { CONTEXT.as_mut().unwrap_or_else(|| panic!()) }
 }
@@ -378,6 +420,7 @@ struct Stage {}
 
 impl EventHandlerFree for Stage {
     fn resize_event(&mut self, width: f32, height: f32) {
+        let _z = telemetry::ZoneGuard::new("Event::resize_event");
         get_context().screen_width = width;
         get_context().screen_height = height;
     }
@@ -492,6 +535,7 @@ impl EventHandlerFree for Stage {
         let context = get_context();
 
         context.chars_pressed_queue.push(character);
+        context.chars_pressed_ui_queue.push(character);
 
         context.input_events.iter_mut().for_each(|arr| {
             arr.push(MiniquadInputEvent::Char {
@@ -530,6 +574,8 @@ impl EventHandlerFree for Stage {
     }
 
     fn update(&mut self) {
+        let _z = telemetry::ZoneGuard::new("Event::update");
+
         // Unless called every frame, cursor will not remain grabbed
         let context = get_context();
         context.quad_context.set_cursor_grab(context.cursor_grabbed);
@@ -545,23 +591,49 @@ impl EventHandlerFree for Stage {
         {
             let _z = telemetry::ZoneGuard::new("Event::draw");
 
-            if let Some(future) = unsafe { MAIN_FUTURE.as_mut() } {
-                let _z = telemetry::ZoneGuard::new("Main loop");
+            use std::panic;
 
+            {
+                let _z = telemetry::ZoneGuard::new("Event::draw begin_frame");
                 get_context().begin_frame();
-
-                if exec::resume(future) {
-                    unsafe {
-                        MAIN_FUTURE = None;
-                    }
-                    get_context().quad_context.quit();
-                    return;
-                }
-                get_context().coroutines_context.update();
             }
 
-            get_context().end_frame();
+            fn maybe_unwind(unwind: bool, f: impl FnOnce() + Sized + panic::UnwindSafe) -> bool {
+                if unwind {
+                    panic::catch_unwind(|| f()).is_ok()
+                } else {
+                    f();
+                    true
+                }
+            }
 
+            let result = maybe_unwind(get_context().unwind, || {
+                if let Some(future) = unsafe { MAIN_FUTURE.as_mut() } {
+                    let _z = telemetry::ZoneGuard::new("Event::draw user code");
+
+                    if exec::resume(future) {
+                        unsafe {
+                            MAIN_FUTURE = None;
+                        }
+                        get_context().quad_context.quit();
+                        return;
+                    }
+                    get_context().coroutines_context.update();
+                }
+            });
+
+            if result == false {
+                if let Some(recovery_future) = get_context().recovery_future.take() {
+                    unsafe {
+                        MAIN_FUTURE = Some(recovery_future);
+                    }
+                }
+            }
+
+            {
+                let _z = telemetry::ZoneGuard::new("Event::draw end_frame");
+                get_context().end_frame();
+            }
             get_context().frame_time = date::now() - get_context().last_frame_time;
             get_context().last_frame_time = date::now();
 
@@ -577,6 +649,24 @@ impl EventHandlerFree for Stage {
         }
 
         telemetry::reset();
+    }
+
+    fn window_restored_event(&mut self) {
+        #[cfg(target_os = "android")]
+        get_context().audio_context.resume();
+    }
+
+    fn window_minimized_event(&mut self) {
+        #[cfg(target_os = "android")]
+        get_context().audio_context.pause();
+    }
+
+    fn quit_requested_event(&mut self) {
+        let context = get_context();
+        if context.prevent_quit_event {
+            context.quad_context.cancel_quit();
+            context.quit_requested = true;
+        }
     }
 }
 

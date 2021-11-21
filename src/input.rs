@@ -125,6 +125,12 @@ pub fn get_char_pressed() -> Option<char> {
     context.chars_pressed_queue.pop()
 }
 
+pub(crate) fn get_char_pressed_ui() -> Option<char> {
+    let context = get_context();
+
+    context.chars_pressed_ui_queue.pop()
+}
+
 /// Return the last pressed key.
 pub fn get_last_key_pressed() -> Option<KeyCode> {
     let context = get_context();
@@ -132,21 +138,21 @@ pub fn get_last_key_pressed() -> Option<KeyCode> {
     context.keys_pressed.iter().next().cloned()
 }
 
-/// Detect if the key is being pressed
+/// Detect if the button is being pressed
 pub fn is_mouse_button_down(btn: MouseButton) -> bool {
     let context = get_context();
 
     context.mouse_down.contains(&btn)
 }
 
-/// Detect if the key has been pressed once
+/// Detect if the button has been pressed once
 pub fn is_mouse_button_pressed(btn: MouseButton) -> bool {
     let context = get_context();
 
     context.mouse_pressed.contains(&btn)
 }
 
-/// Detect if the key has been released this frame
+/// Detect if the button has been released this frame
 pub fn is_mouse_button_released(btn: MouseButton) -> bool {
     let context = get_context();
 
@@ -159,11 +165,21 @@ fn convert_to_local(pixel_pos: Vec2) -> Vec2 {
         - Vec2::new(1.0, 1.0)
 }
 
-#[doc(hidden)]
+/// Prevents quit
+pub fn prevent_quit() {
+    get_context().prevent_quit_event = true;
+}
+
+/// Detect if quit has been requested
+pub fn is_quit_requested() -> bool {
+    get_context().quit_requested
+}
+
+/// Functions for advanced input processing.
+///
+/// Functions in this module should be used by external tools that uses miniquad system, like different UI libraries. User shouldn't use this function.
 pub mod utils {
     use crate::get_context;
-
-    /// Functions in this module should be used by external tools that uses miniquad system, like different UI libraries. User shouldn't use this function.
 
     /// Register input subscriber. Returns subscriber identifier that must be used in `repeat_all_miniquad_input`.
     pub fn register_input_subscriber() -> usize {
@@ -174,7 +190,7 @@ pub mod utils {
         context.input_events.len() - 1
     }
 
-    /// Repeats all events that came since last call of this function with current value of `subscriber`. This function should be called at each frame.
+    /// Repeats all events that came since last call of this function with current value of `subscriber`. This function must be called at each frame.
     pub fn repeat_all_miniquad_input<T: miniquad::EventHandler>(t: &mut T, subscriber: usize) {
         let context = get_context();
         let mut ctx = &mut context.quad_context;

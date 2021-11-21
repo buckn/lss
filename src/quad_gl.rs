@@ -4,14 +4,9 @@ use miniquad::*;
 
 pub use miniquad::{FilterMode, ShaderError};
 
-use crate::{color::Color, texture::Texture2D};
+use crate::{color::Color, logging::warn, telemetry, texture::Texture2D};
 
 use std::collections::BTreeMap;
-
-//use crate::telemetry;
-
-const MAX_VERTICES: usize = 10000;
-const MAX_INDICES: usize = 5000;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DrawMode {
@@ -23,13 +18,14 @@ pub enum DrawMode {
 pub struct GlPipeline(usize);
 
 struct DrawCall {
-    vertices: [Vertex; MAX_VERTICES],
-    indices: [u16; MAX_INDICES],
+    vertices: Vec<Vertex>,
+    indices: Vec<u16>,
 
     vertices_count: usize,
     indices_count: usize,
 
     clip: Option<(i32, i32, i32, i32)>,
+    viewport: Option<(i32, i32, i32, i32)>,
     texture: Texture,
 
     model: glam::Mat4,
@@ -38,6 +34,7 @@ struct DrawCall {
     pipeline: GlPipeline,
     uniforms: Option<Vec<u8>>,
     render_pass: Option<RenderPass>,
+    capture: bool,
 }
 
 #[repr(C)]
@@ -102,13 +99,18 @@ impl DrawCall {
         pipeline: GlPipeline,
         uniforms: Option<Vec<u8>>,
         render_pass: Option<RenderPass>,
+        max_vertices: usize,
+        max_indices: usize,
     ) -> DrawCall {
         DrawCall {
-            vertices: [Vertex::new(0., 0., 0., 0., 0., Color::new(0.0, 0.0, 0.0, 0.0));
-                MAX_VERTICES],
-            indices: [0; MAX_INDICES],
+            vertices: vec![
+                Vertex::new(0., 0., 0., 0., 0., Color::new(0.0, 0.0, 0.0, 0.0));
+                max_vertices
+            ],
+            indices: vec![0; max_indices],
             vertices_count: 0,
             indices_count: 0,
+            viewport: None,
             clip: None,
             texture,
             model,
@@ -116,6 +118,7 @@ impl DrawCall {
             pipeline,
             uniforms,
             render_pass,
+            capture: false,
         }
     }
 
@@ -282,6 +285,7 @@ struct GlState {
     texture: Texture,
     draw_mode: DrawMode,
     clip: Option<(i32, i32, i32, i32)>,
+    viewport: Option<(i32, i32, i32, i32)>,
     model_stack: Vec<glam::Mat4>,
     pipeline: Option<GlPipeline>,
     depth_test_enable: bool,
@@ -290,6 +294,7 @@ struct GlState {
     snapshotter: MagicSnapshotter,
 
     render_pass: Option<RenderPass>,
+    capture: bool,
 }
 
 impl GlState {
@@ -323,7 +328,7 @@ impl PipelineExt {
              }| uniform_name == name,
         );
         if uniform_meta.is_none() {
-            println!("Trying to set non-existing uniform: {}", name);
+            warn!("Trying to set non-existing uniform: {}", name);
             return;
         }
         let uniform_meta = uniform_meta.unwrap();
@@ -332,7 +337,7 @@ impl PipelineExt {
         let uniform_byte_offset = uniform_meta.byte_offset;
 
         if std::mem::size_of::<T>() != uniform_byte_size {
-            println!(
+            warn!(
                 "Trying to set uniform {} sized {} bytes value of {} bytes",
                 name,
                 std::mem::size_of::<T>(),
@@ -538,6 +543,8 @@ pub struct QuadGl {
     start_time: f64,
 
     white_texture: Texture,
+    max_vertices: usize,
+    max_indices: usize,
 }
 
 impl QuadGl {
@@ -548,6 +555,7 @@ impl QuadGl {
             pipelines: PipelinesStorage::new(ctx),
             state: GlState {
                 clip: None,
+                viewport: None,
                 texture: white_texture,
                 model_stack: vec![glam::Mat4::IDENTITY],
                 draw_mode: DrawMode::Triangles,
@@ -556,6 +564,7 @@ impl QuadGl {
                 depth_test_enable: false,
                 snapshotter: MagicSnapshotter::new(ctx),
                 render_pass: None,
+                capture: false,
             },
             draw_calls: Vec::with_capacity(200),
             draw_calls_bindings: Vec::with_capacity(200),
@@ -563,6 +572,8 @@ impl QuadGl {
             start_time: miniquad::date::now(),
 
             white_texture,
+            max_vertices: 10000,
+            max_indices: 5000,
         }
     }
 
@@ -643,12 +654,12 @@ impl QuadGl {
             let vertex_buffer = Buffer::stream(
                 ctx,
                 BufferType::VertexBuffer,
-                MAX_VERTICES * std::mem::size_of::<Vertex>(),
+                self.max_vertices * std::mem::size_of::<Vertex>(),
             );
             let index_buffer = Buffer::stream(
                 ctx,
                 BufferType::IndexBuffer,
-                MAX_INDICES * std::mem::size_of::<u16>(),
+                self.max_indices * std::mem::size_of::<u16>(),
             );
             let bindings = Bindings {
                 vertex_buffers: vec![vertex_buffer],
@@ -699,6 +710,7 @@ impl QuadGl {
             bindings
                 .images
                 .resize(2 + pipeline.textures.len(), Texture::empty());
+
             for (pos, name) in pipeline.textures.iter().enumerate() {
                 if let Some(texture) = pipeline.textures_data.get(name).copied() {
                     bindings.images[2 + pos] = texture;
@@ -706,12 +718,17 @@ impl QuadGl {
             }
 
             ctx.apply_pipeline(&pipeline.pipeline);
+            if let Some((x, y, w, h)) = dc.viewport {
+                ctx.apply_viewport(x, y, w, h);
+            } else {
+                ctx.apply_viewport(0, 0, width as i32, height as i32);
+            }
             if let Some(clip) = dc.clip {
                 ctx.apply_scissor_rect(clip.0, height as i32 - (clip.1 + clip.3), clip.2, clip.3);
             } else {
                 ctx.apply_scissor_rect(0, 0, width as i32, height as i32);
             }
-            ctx.apply_bindings(&bindings);
+            ctx.apply_bindings(bindings);
 
             if let Some(ref uniforms) = dc.uniforms {
                 for i in 0..uniforms.len() {
@@ -726,14 +743,21 @@ impl QuadGl {
                 pipeline.uniforms_data.len(),
             );
             ctx.draw(0, dc.indices_count as i32, 1);
+            ctx.end_render_pass();
+
+            if dc.capture {
+                telemetry::track_drawcall(&pipeline.pipeline, bindings, dc.indices_count);
+            }
 
             dc.vertices_count = 0;
             dc.indices_count = 0;
-
-            ctx.end_render_pass();
         }
 
         self.draw_calls_count = 0;
+    }
+
+    pub(crate) fn capture(&mut self, capture: bool) {
+        self.state.capture = capture;
     }
 
     pub fn get_projection_matrix(&self) -> glam::Mat4 {
@@ -746,6 +770,10 @@ impl QuadGl {
 
     pub fn get_active_render_pass(&self) -> Option<RenderPass> {
         self.state.render_pass
+    }
+
+    pub fn is_depth_test_enabled(&self) -> bool {
+        self.state.depth_test_enable
     }
 
     pub fn render_pass(&mut self, render_pass: Option<RenderPass>) {
@@ -762,6 +790,19 @@ impl QuadGl {
 
     pub fn scissor(&mut self, clip: Option<(i32, i32, i32, i32)>) {
         self.state.clip = clip;
+    }
+
+    pub fn viewport(&mut self, viewport: Option<(i32, i32, i32, i32)>) {
+        self.state.viewport = viewport;
+    }
+
+    pub fn get_viewport(&self) -> (i32, i32, i32, i32) {
+        self.state.viewport.unwrap_or((
+            0,
+            0,
+            crate::window::screen_width() as _,
+            crate::window::screen_height() as _,
+        ))
     }
 
     pub fn push_model_matrix(&mut self, matrix: glam::Mat4) {
@@ -784,8 +825,12 @@ impl QuadGl {
     }
 
     pub fn geometry(&mut self, vertices: &[impl Into<VertexInterop> + Copy], indices: &[u16]) {
-        assert!(vertices.len() <= MAX_VERTICES);
-        assert!(indices.len() <= MAX_INDICES);
+        if vertices.len() >= self.max_vertices || indices.len() >= self.max_indices {
+            warn!("geometry() exceeded max drawcall size, clamping");
+        }
+
+        let vertices = &vertices[0..self.max_vertices.min(vertices.len())];
+        let indices = &indices[0..self.max_indices.min(indices.len())];
 
         let pip = self.state.pipeline.unwrap_or(
             self.pipelines
@@ -802,12 +847,14 @@ impl QuadGl {
         if previous_dc.map_or(true, |draw_call| {
             draw_call.texture != self.state.texture
                 || draw_call.clip != self.state.clip
+                || draw_call.viewport != self.state.viewport
                 || draw_call.model != self.state.model()
                 || draw_call.pipeline != pip
                 || draw_call.render_pass != self.state.render_pass
                 || draw_call.draw_mode != self.state.draw_mode
-                || draw_call.vertices_count >= MAX_VERTICES - vertices.len()
-                || draw_call.indices_count >= MAX_INDICES - indices.len()
+                || draw_call.vertices_count >= self.max_vertices - vertices.len()
+                || draw_call.indices_count >= self.max_indices - indices.len()
+                || draw_call.capture != self.state.capture
                 || self.state.break_batching
         }) {
             let uniforms = self.state.pipeline.map_or(None, |pipeline| {
@@ -827,6 +874,8 @@ impl QuadGl {
                     pip,
                     uniforms.clone(),
                     self.state.render_pass,
+                    self.max_vertices,
+                    self.max_indices,
                 ));
             }
             self.draw_calls[self.draw_calls_count].texture = self.state.texture;
@@ -834,9 +883,11 @@ impl QuadGl {
             self.draw_calls[self.draw_calls_count].vertices_count = 0;
             self.draw_calls[self.draw_calls_count].indices_count = 0;
             self.draw_calls[self.draw_calls_count].clip = self.state.clip;
+            self.draw_calls[self.draw_calls_count].viewport = self.state.viewport;
             self.draw_calls[self.draw_calls_count].model = self.state.model();
             self.draw_calls[self.draw_calls_count].pipeline = pip;
             self.draw_calls[self.draw_calls_count].render_pass = self.state.render_pass;
+            self.draw_calls[self.draw_calls_count].capture = self.state.capture;
 
             self.draw_calls_count += 1;
             self.state.break_batching = false;
@@ -883,6 +934,39 @@ impl QuadGl {
             .textures_data
             .entry(name.to_owned())
             .or_insert(texture.texture) = texture.texture;
+    }
+
+    pub(crate) fn update_drawcall_capacity(
+        &mut self,
+        ctx: &mut Context,
+        max_vertices: usize,
+        max_indices: usize,
+    ) {
+        self.max_vertices = max_vertices;
+        self.max_indices = max_indices;
+
+        for draw_call in &mut self.draw_calls {
+            draw_call.vertices =
+                vec![Vertex::new(0., 0., 0., 0., 0., Color::new(0.0, 0.0, 0.0, 0.0)); max_vertices];
+            draw_call.indices = vec![0; max_indices];
+        }
+        for binding in &mut self.draw_calls_bindings {
+            let vertex_buffer = Buffer::stream(
+                ctx,
+                BufferType::VertexBuffer,
+                self.max_vertices * std::mem::size_of::<Vertex>(),
+            );
+            let index_buffer = Buffer::stream(
+                ctx,
+                BufferType::IndexBuffer,
+                self.max_indices * std::mem::size_of::<u16>(),
+            );
+            *binding = Bindings {
+                vertex_buffers: vec![vertex_buffer],
+                index_buffer,
+                images: vec![Texture::empty(), Texture::empty()],
+            };
+        }
     }
 }
 
