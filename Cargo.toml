@@ -28,7 +28,7 @@ all-features = true
 [dependencies]
 miniquad = { version = "0.3.0-alpha.37", features = ["log-impl"] }
 quad-rand = "0.2.1"
-glam = {version = "0.19", features = ["scalar-math", "serde"] }
+glam = {version = "0.19", features = ["serde"] }
 image = { version = "0.23.12", default-features = false, features = ["png", "tga"] }
 macroquad_macro = { version = "0.1.7", path = "macroquad_macro" }
 fontdue = "0.5.0"
