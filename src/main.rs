@@ -1,7 +1,7 @@
 mod comp;
 
-use glam::Vec2;
-use macroquad::prelude::{ get_time, Camera2D, screen_height, is_mouse_button_down, is_mouse_button_released, is_key_down, next_frame, set_default_camera, BLUE, screen_width, draw_circle, GRAY, BLACK, BROWN, set_camera, WHITE, clear_background, MouseButton, KeyCode };
+use macroquad::prelude::*;
+use serde::*;
 
 use comp::*;
 use Typ::*;
@@ -154,6 +154,7 @@ pub struct Cntrl {
     fire1_down: bool,
     fire2_down: bool,
     fire3_down: bool,
+    mouse: Vec2,
 }
 
 impl Cntrl {
@@ -174,6 +175,9 @@ impl Cntrl {
             fire1_down: is_mouse_button_down(MouseButton::Left),
             fire2_down: is_mouse_button_down(MouseButton::Right),
             fire3_down: is_mouse_button_down(MouseButton::Middle),
+            mouse: mouse_position_local(),
         }
     }
 }
+
+fn vec2_to_tup(x: Vec2) -> (f32, f32) { x.into() }

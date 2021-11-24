@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::cell::RefCell;
-use glam::f32::{Vec2};
 use serde::{Deserialize, ser, Serialize};
+use macroquad::prelude::*;
 
 /*comp
     Stat

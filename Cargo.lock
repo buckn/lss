@@ -113,17 +113,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "esk"
-version = "0.1.0"
-dependencies = [
- "glam 0.19.0",
- "macroquad",
- "serde",
- "serde_cbor",
- "toml",
-]
-
-[[package]]
 name = "fontdue"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -138,15 +127,6 @@ name = "glam"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "333928d5eb103c5d4050533cec0384302db6be8ef7d3cebd30ec6a35350353da"
-
-[[package]]
-name = "glam"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b8509e6791516e81c1a630d0bd7fbac36d2fa8712a9da8662e716b52d5051ca"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "half"
@@ -202,13 +182,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd8f7255a17a627354f321ef0055d63b898c6fb27eff628af4d1b66b7331edf6"
 
 [[package]]
+name = "lss"
+version = "0.1.0"
+dependencies = [
+ "macroquad",
+ "serde",
+ "serde_cbor",
+ "toml",
+]
+
+[[package]]
 name = "macroquad"
 version = "0.3.10"
-source = "git+https://github.com/not-fl3/macroquad#666a2c6119b89639fcfa56271c5a2d83e3972504"
+source = "git+https://github.com/buckn/macroquad#3b658b657026a122aa9d6e0bca997b15ecdc9494"
 dependencies = [
  "bumpalo",
  "fontdue",
- "glam 0.14.0",
+ "glam",
  "image",
  "macroquad_macro",
  "miniquad",
@@ -219,7 +209,7 @@ dependencies = [
 [[package]]
 name = "macroquad_macro"
 version = "0.1.7"
-source = "git+https://github.com/not-fl3/macroquad#666a2c6119b89639fcfa56271c5a2d83e3972504"
+source = "git+https://github.com/buckn/macroquad#3b658b657026a122aa9d6e0bca997b15ecdc9494"
 
 [[package]]
 name = "maybe-uninit"

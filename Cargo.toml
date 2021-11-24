@@ -1,14 +1,13 @@
 [package]
-name = "esk"
+name = "lss"
 version = "0.1.0"
 authors = ["buckn <git@buckn.dev>"]
 edition = "2018"
 
 [dependencies]
-macroquad = { git = "https://github.com/not-fl3/macroquad" }
+macroquad = { git = "https://github.com/buckn/macroquad" }
 serde = { version = "1.0.125", features = ["derive", "rc"] }
 serde_cbor = { version = "0.11.1" }
-glam = { version = "0.19.0", features = ["serde"] }
 toml = "0.5.8"
 
 [profile.dev.package.'*']
